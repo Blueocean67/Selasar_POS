@@ -1,0 +1,49 @@
+name: selasar_pos
+description: "Point of Sale App untuk Selasar Caffe"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.0.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # UI & Fonts
+  google_fonts: ^6.1.0
+  # Untuk animasi halus (Opsional tapi rekomen buat aesthetic)
+  flutter_animate: ^4.5.0 
+
+  # Tambahan untuk format mata uang Rupiah & Tanggal
+  intl: ^0.19.0
+
+  # --- DEPENDENCIES UNTUK REPORT (PDF & EXCEL) ---
+  pdf: ^3.10.8
+  excel: ^4.0.2
+  path_provider: ^2.1.2
+  open_filex: ^4.4.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1 
+
+flutter:
+  uses-material-design: true
+  
+  # Pastikan folder ini beneran ada di project kamu
+  assets:
+    - assets/images/
+    # - assets/fonts/ (Aktifkan jika ada font custom)
+
+# Konfigurasi Ikon Aplikasi
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/SelasarLogo.png"
+  adaptive_icon_background: "#F8F9F2"
+  adaptive_icon_foreground: "assets/images/SelasarLogo.png"
+  remove_alpha_ios: true
