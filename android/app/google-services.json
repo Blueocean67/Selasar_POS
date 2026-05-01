@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "1005640530574",
+    "project_id": "selasar-pos",
+    "storage_bucket": "selasar-pos.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1005640530574:android:6d0f69a624bbc7a4b9a7df",
+        "android_client_info": {
+          "package_name": "com.example.selasar_pos"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "1005640530574-26p33i8kt3e03e3ep0ha0rhvusueinof.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.selasar_pos",
+            "certificate_hash": "f72b2f1134ae4e2e5e93914b9ab23d26988c35cc"
+          }
+        },
+        {
+          "client_id": "1005640530574-5mtls7qkcktgtp866nkbqjd8cui1i7cd.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDQnBElNkXBbF0xq-6Q-VLlfcv7kn00gfU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "1005640530574-5mtls7qkcktgtp866nkbqjd8cui1i7cd.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

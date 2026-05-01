@@ -1,0 +1,30 @@
+plugins {
+    // Hapus versinya, biarin id-nya aja biar gak bentrok sama Flutter
+    id "com.android.application" apply false
+    id "org.jetbrains.kotlin.android" apply false
+    id "dev.flutter.flutter-gradle-plugin" apply false
+    
+    // Khusus yang ini kasih versi terbaru biar sinkron sama Firebase
+    id "com.google.gms.google-services" version "4.4.1" apply false
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+rootProject.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir("../../build").get())
+
+subprojects {
+    project.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir(project.name).get())
+}
+
+subprojects {
+    project.evaluationDependsOn(":app")
+}
+
+tasks.register("clean", Delete) {
+    delete rootProject.layout.buildDirectory
+}

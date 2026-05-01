@@ -1,91 +1,210 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw; // Prefix 'pw' biar gak bentrok ama Flutter
+import 'package:pdf/widgets.dart' as pw;
 import 'package:excel/excel.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:open_filex/open_filex.dart';
-import '../theme/app_colors.dart';
+import 'package:intl/intl.dart';
 
-class ReportPage extends StatelessWidget {
+// Palette Selasar Ruang
+class AppColors {
+  static const primary = Color(0xFF4A5D3F);
+  static const secondary = Color(0xFFA3B18A);
+  static const background = Color(0xFFF8F9F2);
+  static const textPrimary = Color(0xFF2D3329);
+  static const textSecondary = Color(0xFF7A7A7A);
+  static const accentGold = Color(0xFFBC8E5B);
+}
+
+class ReportPage extends StatefulWidget {
   const ReportPage({super.key});
 
-  // --- FUNGSI EKSPOR EXCEL (FIXED ANTI-ERROR) ---
+  @override
+  State<ReportPage> createState() => _ReportPageState();
+}
+
+class _ReportPageState extends State<ReportPage> {
+  final String dateNow = DateFormat('dd MMMM yyyy').format(DateTime.now());
+  final NumberFormat currencyFormat = NumberFormat.currency(locale: 'id', symbol: 'Rp ', decimalDigits: 0);
+
+  // Data Dummy untuk Laporan
+  final List<List<dynamic>> reportData = [
+    ['Coffee', 'Kopi Gula Aren, Amerikano', 7200000],
+    ['Non-Coffee', 'Matcha Latte, Es Teh Manis', 3100000],
+    ['Food & Snack', 'Nasi Goreng, Roti Bakar', 2150000],
+  ];
+
+  // ==========================================
+  // 1. EXCEL: PROFESIONAL STYLING (FIXED LOGIC)
+  // ==========================================
   Future<void> _exportToExcel(BuildContext context) async {
-    var excel = Excel.createExcel();
-    Sheet sheetObject = excel['Laporan Penjualan'];
+    try {
+      var excel = Excel.createExcel();
+      Sheet sheetObject = excel['Laporan_Selasar'];
+      excel.delete('Sheet1');
 
-    // Header pakai TextCellValue agar sinkron dengan library Excel terbaru
-    sheetObject.appendRow([
-      TextCellValue('Kategori'), 
-      TextCellValue('Total Penjualan'),
-    ]);
+      sheetObject.cell(CellIndex.indexByString("A1")).value = TextCellValue("LAPORAN PENJUALAN SELASAR RUANG");
+      sheetObject.cell(CellIndex.indexByString("A2")).value = TextCellValue("Dicetak pada: $dateNow");
 
-    // Data Penjualan
-    sheetObject.appendRow([TextCellValue('Coffee'), TextCellValue('7.200.000')]);
-    sheetObject.appendRow([TextCellValue('Non-Coffee'), TextCellValue('3.100.000')]);
-    sheetObject.appendRow([TextCellValue('Food & Snack'), TextCellValue('2.150.000')]);
+      CellStyle headerStyle = CellStyle(
+        backgroundColorHex: ExcelColor.fromHexString('#4A5D3F'),
+        fontColorHex: ExcelColor.fromHexString('#FFFFFF'),
+        bold: true,
+        horizontalAlign: HorizontalAlign.Center,
+        verticalAlign: VerticalAlign.Center,
+      );
 
-    var fileBytes = excel.save();
-    final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/Laporan_Selasar.xlsx');
-    
-    await file.writeAsBytes(fileBytes!);
-    _showSuccessSheet(context, "Excel", file.path);
+      List<String> headers = ['KATEGORI', 'ITEM TERJUAL', 'SUBTOTAL (IDR)'];
+      for (var i = 0; i < headers.length; i++) {
+        var cell = sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: i, rowIndex: 4));
+        cell.value = TextCellValue(headers[i]);
+        cell.cellStyle = headerStyle;
+        sheetObject.setColumnWidth(i, 30);
+      }
+
+      double totalOmzet = 0;
+      for (var i = 0; i < reportData.length; i++) {
+        final nominal = int.tryParse(reportData[i][2].toString()) ?? 0;
+        totalOmzet += nominal;
+        
+        sheetObject.appendRow([
+          TextCellValue(reportData[i][0]?.toString() ?? ''),
+          TextCellValue(reportData[i][1]?.toString() ?? ''),
+          IntCellValue(nominal),
+        ]);
+      }
+
+      var totalRowIndex = 5 + reportData.length;
+      sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 1, rowIndex: totalRowIndex)).value = TextCellValue("TOTAL OMZET");
+      sheetObject.cell(CellIndex.indexByColumnRow(columnIndex: 2, rowIndex: totalRowIndex)).value = IntCellValue(totalOmzet.toInt());
+
+      final fileBytes = excel.save();
+      final directory = await getApplicationDocumentsDirectory();
+      final filePath = '${directory.path}/Laporan_Selasar_${DateTime.now().millisecondsSinceEpoch}.xlsx';
+      final file = File(filePath);
+
+      await file.writeAsBytes(fileBytes!);
+      if (context.mounted) _showSuccessSheet(context, "Excel", filePath);
+    } catch (e) {
+      if (context.mounted) _showError(context, "Gagal ekspor Excel: $e");
+    }
   }
 
-  // --- FUNGSI EKSPOR PDF (FIXED DENGAN PREFIX PW) ---
+  // ==========================================
+  // 2. PDF: BRANDED & FORMAL (FIXED COLOR PROPERTY)
+  // ==========================================
   Future<void> _exportToPdf(BuildContext context) async {
-    final pdf = pw.Document();
+    try {
+      final pdf = pw.Document();
 
-    pdf.addPage(
-      pw.Page(
-        pageFormat: PdfPageFormat.a4,
-        build: (pw.Context context) {
-          return pw.Padding(
-            padding: const pw.EdgeInsets.all(32),
-            child: pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
+      pdf.addPage(
+        pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(40),
+          build: (pw.Context context) => [
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
-                pw.Text("SELASAR RUANG CAFE", 
-                    style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold)),
-                pw.Text("Laporan Ringkasan Bisnis", style: const pw.TextStyle(fontSize: 14)),
-                pw.SizedBox(height: 20),
-                pw.Divider(),
-                pw.SizedBox(height: 20),
-                pw.Text("Total Pendapatan: Rp 12.450.000", 
-                    style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
-                pw.SizedBox(height: 30),
-                pw.Text("Rincian Metode Pembayaran:"),
-                pw.Bullet(text: "QRIS: Rp 8.100.000 (65%)"),
-                pw.Bullet(text: "Tunai: Rp 3.120.000 (25%)"),
-                pw.Bullet(text: "Debit: Rp 1.230.000 (10%)"),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text("SELASAR RUANG", style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
+                    pw.Text("Premium Coffee & POS System Report", style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey)),
+                  ],
+                ),
+                pw.Container(
+                  height: 50, width: 50,
+                  decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF4A5D3F), shape: pw.BoxShape.circle),
+                  child: pw.Center(child: pw.Text("SR", style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold))),
+                ),
               ],
             ),
-          );
-        },
-      ),
-    );
+            pw.SizedBox(height: 20),
+            pw.Divider(thickness: 1, color: PdfColors.grey300),
+            pw.SizedBox(height: 20),
 
-    final directory = await getApplicationDocumentsDirectory();
-    final file = File('${directory.path}/Laporan_Selasar.pdf');
-    await file.writeAsBytes(await pdf.save());
+            pw.Text("LAPORAN ANALISIS BISNIS", style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
+            pw.Text("Periode: $dateNow", style: const pw.TextStyle(fontSize: 10)),
+            pw.SizedBox(height: 25),
 
-    _showSuccessSheet(context, "PDF", file.path);
+            pw.Table(
+              border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+              children: [
+                pw.TableRow(
+                  decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF4A5D3F)),
+                  children: [
+                    pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text("KATEGORI", style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                    pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text("DETAIL MENU", style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                    pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text("SUBTOTAL", style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 10))),
+                  ],
+                ),
+                ...reportData.map((row) => pw.TableRow(
+                  children: [
+                    pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(row[0].toString(), style: const pw.TextStyle(fontSize: 9))),
+                    pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(row[1].toString(), style: const pw.TextStyle(fontSize: 9))),
+                    pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(currencyFormat.format(row[2]), style: const pw.TextStyle(fontSize: 9))),
+                  ],
+                )),
+              ],
+            ),
+
+            pw.SizedBox(height: 30),
+            pw.Container(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.end,
+                children: [
+                  pw.Text("TOTAL PENDAPATAN", style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey)),
+                  pw.Text(currencyFormat.format(12450000), style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
+                ],
+              ),
+            ),
+            
+            pw.SizedBox(height: 50),
+            pw.Text("Dokumen ini dihasilkan secara otomatis oleh Selasar POS System.", style: pw.TextStyle(fontSize: 8, fontStyle: pw.FontStyle.italic, color: PdfColors.grey)),
+          ],
+        ),
+      );
+
+      final directory = await getApplicationDocumentsDirectory();
+      final filePath = '${directory.path}/Laporan_Selasar_${DateTime.now().millisecondsSinceEpoch}.pdf';
+      final file = File(filePath);
+      await file.writeAsBytes(await pdf.save());
+
+      if (context.mounted) _showSuccessSheet(context, "PDF", filePath);
+    } catch (e) {
+      if (context.mounted) _showError(context, "Gagal ekspor PDF: $e");
+    }
   }
 
   void _showSuccessSheet(BuildContext context, String type, String path) {
+    HapticFeedback.heavyImpact();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         backgroundColor: AppColors.primary,
-        content: Text("$type berhasil disimpan!", style: const TextStyle(color: Colors.white)),
+        behavior: SnackBarBehavior.floating,
+        margin: const EdgeInsets.all(15),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+        content: Row(
+          children: [
+            const Icon(Icons.check_circle, color: Colors.white, size: 20),
+            const SizedBox(width: 12),
+            Expanded(child: Text("$type Selasar Berhasil Dibuat!")),
+          ],
+        ),
         action: SnackBarAction(
-          label: "BUKA", 
+          label: "BUKA",
           textColor: AppColors.secondary,
-          onPressed: () => OpenFilex.open(path)
+          onPressed: () => OpenFilex.open(path),
         ),
       ),
     );
+  }
+
+  void _showError(BuildContext context, String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.redAccent));
   }
 
   @override
@@ -96,40 +215,32 @@ class ReportPage extends StatelessWidget {
         backgroundColor: Colors.white,
         elevation: 0,
         centerTitle: true,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new, color: AppColors.primary, size: 20),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text("Analisis Bisnis",
-            style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 18)),
+        title: const Text("INSIGHT BISNIS",
+            style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13, letterSpacing: 2, color: AppColors.primary)),
         actions: [
           IconButton(
-            icon: const Icon(Icons.ios_share, color: AppColors.primary),
+            icon: const Icon(Icons.download_for_offline_rounded, color: AppColors.primary),
             onPressed: () => _showExportMenu(context),
           )
         ],
       ),
       body: SingleChildScrollView(
         physics: const BouncingScrollPhysics(),
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 10),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _buildHeaderCard(),
-            const SizedBox(height: 24),
-            const Text("Analisis Kategori", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            Text(dateNow, style: const TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold, fontSize: 12)),
+            const SizedBox(height: 12),
+            const _IncomeHeaderCard(),
+            const SizedBox(height: 32),
+            _sectionHeader("Komposisi Penjualan", "Berdasarkan Kategori"),
             const SizedBox(height: 16),
-            _buildChartSection(),
-            const SizedBox(height: 24),
-            const Text("Metode Pembayaran", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const _CategoryChartCard(),
+            const SizedBox(height: 32),
+            _sectionHeader("Metode Pembayaran", "Paling Sering Digunakan"),
             const SizedBox(height: 16),
-            _buildPaymentMethodSection(),
-            const SizedBox(height: 24),
-            const Text("Detail Performa", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-            const SizedBox(height: 16),
-            _buildCategoryStats("Coffee", "Rp 7.200.000", 0.6),
-            _buildCategoryStats("Non-Coffee", "Rp 3.100.000", 0.25),
-            _buildCategoryStats("Food & Snack", "Rp 2.150.000", 0.15),
+            const _PaymentMethodCard(),
             const SizedBox(height: 40),
           ],
         ),
@@ -137,49 +248,94 @@ class ReportPage extends StatelessWidget {
     );
   }
 
-  Widget _buildHeaderCard() {
+  Widget _sectionHeader(String title, String sub) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.textPrimary)),
+        Text(sub, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+      ],
+    );
+  }
+
+  void _showExportMenu(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(35))),
+      builder: (context) => Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+            const SizedBox(height: 24),
+            const Text("Unduh Dokumen Resmi", style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+            const SizedBox(height: 8),
+            const Text("Laporan Branded Selasar Ruang Cafe.", style: TextStyle(color: Colors.grey, fontSize: 13)),
+            const SizedBox(height: 32),
+            _ExportButton(
+              icon: Icons.picture_as_pdf_rounded,
+              label: "Laporan PDF Selasar",
+              sub: "Format Branded & Formal",
+              color: Colors.redAccent,
+              onTap: () { Navigator.pop(context); _exportToPdf(context); },
+            ),
+            const SizedBox(height: 16),
+            _ExportButton(
+              icon: Icons.table_view_rounded,
+              label: "Spreadsheet Excel (XLSX)",
+              sub: "Format Tabel & Data Mentah",
+              color: Colors.green,
+              onTap: () { Navigator.pop(context); _exportToExcel(context); },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IncomeHeaderCard extends StatelessWidget {
+  const _IncomeHeaderCard();
+  @override
+  Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(28),
       decoration: BoxDecoration(
-        color: AppColors.primary,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [BoxShadow(color: AppColors.primary.withOpacity(0.3), blurRadius: 20, offset: const Offset(0, 10))],
+        gradient: const LinearGradient(colors: [AppColors.primary, Color(0xFF5B714D)]),
+        borderRadius: BorderRadius.circular(35),
       ),
-      child: Column(
+      child: const Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("ESTIMASI PENDAPATAN", style: TextStyle(color: Colors.white70, fontSize: 10, letterSpacing: 1.2)),
-          const Text("Rp 12.450.000", style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 10),
-          const Divider(color: Colors.white24),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              const Icon(Icons.trending_up, color: AppColors.secondary, size: 20),
-              const SizedBox(width: 8),
-              const Text("12.5% dibanding bulan lalu", style: TextStyle(color: Colors.white, fontSize: 12)),
-            ],
-          )
+          Text("ESTIMASI OMZET", style: TextStyle(color: Colors.white60, fontSize: 10, letterSpacing: 2, fontWeight: FontWeight.bold)),
+          SizedBox(height: 8),
+          Text("Rp 12.450.000", style: TextStyle(color: Colors.white, fontSize: 34, fontWeight: FontWeight.w900)),
         ],
       ),
     );
   }
+}
 
-  Widget _buildChartSection() {
+class _CategoryChartCard extends StatelessWidget {
+  const _CategoryChartCard();
+  @override
+  Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(30)),
       child: Row(
         children: [
-          SizedBox(height: 100, width: 100, child: CustomPaint(painter: PieChartPainter())),
-          const SizedBox(width: 25),
-          Expanded(
+          SizedBox(height: 110, width: 110, child: CustomPaint(painter: DonutChartPainter())),
+          const SizedBox(width: 30),
+          const Expanded(
             child: Column(
               children: [
-                _legendItem(AppColors.primary, "Coffee", "60%"),
-                _legendItem(AppColors.secondary, "Non-Coffee", "25%"),
-                _legendItem(const Color(0xFFDDE5D7), "Food", "15%"),
+                _LegendTile(AppColors.primary, "Coffee", "60%"),
+                _LegendTile(AppColors.secondary, "Non-Coffee", "25%"),
+                _LegendTile(Color(0xFFE5E9E0), "Food", "15%"),
               ],
             ),
           )
@@ -187,127 +343,109 @@ class ReportPage extends StatelessWidget {
       ),
     );
   }
+}
 
-  Widget _legendItem(Color color, String label, String percent) {
+class _PaymentMethodCard extends StatelessWidget {
+  const _PaymentMethodCard();
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(30)),
+      child: const Column(
+        children: [
+          _PaymentProgressRow(Icons.qr_code_scanner_rounded, "QRIS Payment", "Rp 8.1M", 0.65),
+          SizedBox(height: 24),
+          _PaymentProgressRow(Icons.wallet_rounded, "Tunai/Cash", "Rp 3.1M", 0.25),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExportButton extends StatelessWidget {
+  final IconData icon;
+  final String label, sub;
+  final Color color;
+  final VoidCallback onTap;
+  const _ExportButton({required this.icon, required this.label, required this.sub, required this.color, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      onTap: onTap,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: BorderSide(color: Colors.grey.withOpacity(0.1))),
+      leading: Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(15)), child: Icon(icon, color: color)),
+      title: Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+      subtitle: Text(sub, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+    );
+  }
+}
+
+class _LegendTile extends StatelessWidget {
+  final Color color;
+  final String label, percent;
+  const _LegendTile(this.color, this.label, this.percent);
+  @override
+  Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
         children: [
           Container(width: 10, height: 10, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-          const SizedBox(width: 10),
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.textSecondary)),
+          const SizedBox(width: 12),
+          Text(label, style: const TextStyle(fontSize: 13, color: AppColors.textSecondary, fontWeight: FontWeight.w600)),
           const Spacer(),
-          Text(percent, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+          Text(percent, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.textPrimary)),
         ],
       ),
     );
   }
+}
 
-  Widget _buildPaymentMethodSection() {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
-      child: Column(
-        children: [
-          _paymentRow(Icons.qr_code_2_rounded, "QRIS", "Rp 8.100.000", 0.65),
-          const SizedBox(height: 15),
-          _paymentRow(Icons.payments_rounded, "Tunai/Cash", "Rp 3.120.000", 0.25),
-          const SizedBox(height: 15),
-          _paymentRow(Icons.credit_card_rounded, "Debit Card", "Rp 1.230.000", 0.10),
-        ],
-      ),
-    );
-  }
-
-  Widget _paymentRow(IconData icon, String label, String amount, double percent) {
+class _PaymentProgressRow extends StatelessWidget {
+  final IconData icon;
+  final String label, amount;
+  final double progress;
+  const _PaymentProgressRow(this.icon, this.label, this.amount, this.progress);
+  @override
+  Widget build(BuildContext context) {
     return Column(
       children: [
         Row(
           children: [
             Icon(icon, color: AppColors.primary, size: 20),
             const SizedBox(width: 12),
-            Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
             const Spacer(),
-            Text(amount, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            Text(amount, style: const TextStyle(fontWeight: FontWeight.w900, color: AppColors.primary)),
           ],
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 12),
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: LinearProgressIndicator(
-            value: percent,
-            minHeight: 5,
-            backgroundColor: AppColors.background,
-            valueColor: const AlwaysStoppedAnimation<Color>(AppColors.secondary),
-          ),
+          child: LinearProgressIndicator(value: progress, minHeight: 8, backgroundColor: AppColors.background, color: AppColors.secondary),
         )
       ],
     );
   }
-
-  Widget _buildCategoryStats(String label, String value, double percentage) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20)),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-              const SizedBox(height: 4),
-              Text("${(percentage * 100).toInt()}% Kontribusi", style: const TextStyle(fontSize: 11, color: Colors.grey)),
-            ],
-          ),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.bold, color: AppColors.primary, fontSize: 15)),
-        ],
-      ),
-    );
-  }
-
-  void _showExportMenu(BuildContext context) {
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(30))),
-      builder: (context) => Container(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Simpan Laporan", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
-            _exportOption(context, Icons.picture_as_pdf, "Format PDF", Colors.red, () => _exportToPdf(context)),
-            _exportOption(context, Icons.table_chart, "Format Excel", Colors.green, () => _exportToExcel(context)),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _exportOption(BuildContext context, IconData icon, String label, Color color, VoidCallback onTap) {
-    return ListTile(
-      leading: Icon(icon, color: color),
-      title: Text(label),
-      onTap: () { Navigator.pop(context); onTap(); },
-    );
-  }
 }
 
-class PieChartPainter extends CustomPainter {
+class DonutChartPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.stroke..strokeWidth = 18..strokeCap = StrokeCap.round;
     final center = Offset(size.width / 2, size.height / 2);
     final radius = size.width / 2;
-    final paint = Paint()..style = PaintingStyle.fill;
-
+    final rect = Rect.fromCircle(center: center, radius: radius);
+    
     paint.color = AppColors.primary;
-    canvas.drawArc(Rect.fromCircle(center: center, radius: radius), -1.5, 3.8, true, paint);
+    canvas.drawArc(rect, -1.5, 3.8, false, paint);
+    
     paint.color = AppColors.secondary;
-    canvas.drawArc(Rect.fromCircle(center: center, radius: radius), 2.3, 1.5, true, paint);
-    paint.color = const Color(0xFFDDE5D7);
-    canvas.drawArc(Rect.fromCircle(center: center, radius: radius), 3.8, 1.0, true, paint);
+    canvas.drawArc(rect, 2.4, 1.5, false, paint);
+    
+    paint.color = const Color(0xFFE5E9E0);
+    canvas.drawArc(rect, 4.0, 0.7, false, paint);
   }
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;

@@ -1,162 +1,268 @@
 import 'package:flutter/material.dart';
+import 'dart:math';
 
 class ReceiptPage extends StatelessWidget {
   const ReceiptPage({super.key});
 
+  static const Color primaryGreen = Color(0xFF4A5D3F);
+  static const Color textDark = Color(0xFF2D3329);
+  static const Color scaffoldBg = Color(0xFFF8F9F2);
+
+  String _generateTransactionID() {
+    var random = Random();
+    int id = random.nextInt(90000) + 10000;
+    return "#SR-$id";
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF8F9F2),
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.close, color: Color(0xFF4A5D3F)),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: const Text("Struk Digital", 
-          style: TextStyle(color: Color(0xFF2D3329), fontWeight: FontWeight.bold, fontSize: 16)),
-        centerTitle: true,
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 10),
-        child: Column(
-          children: [
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.05),
-                    blurRadius: 15,
-                    offset: const Offset(0, 5),
-                  )
-                ],
+    return PopScope(
+      canPop: false, // Biar kasir harus klik tombol selesai/home
+      child: Scaffold(
+        backgroundColor: scaffoldBg,
+        appBar: _buildAppBar(context),
+        body: SingleChildScrollView(
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(24, 8, 24, 40),
+          child: Column(
+            children: [
+              TweenAnimationBuilder(
+                duration: const Duration(milliseconds: 800),
+                tween: Tween<double>(begin: 0, end: 1),
+                builder: (context, double value, child) {
+                  return Opacity(
+                    opacity: value,
+                    child: Transform.translate(
+                      offset: Offset(0, 30 * (1 - value)),
+                      child: child,
+                    ),
+                  );
+                },
+                child: _buildReceiptCard(),
               ),
-              child: Column(
-                children: [
-                  const SizedBox(height: 30),
-                  // Logo & Nama Cafe
-                  const Text("SELASAR RUANG", 
-                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 2, color: Color(0xFF4A5D3F))),
-                  const Text("Jl. Merdeka No. 123, Indonesia", 
-                    style: TextStyle(fontSize: 12, color: Colors.grey)),
-                  const SizedBox(height: 20),
-                  const Divider(indent: 20, endIndent: 20),
-                  
-                  // Info Transaksi
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      children: [
-                        _receiptRow("ID Transaksi", "#SR-99210"),
-                        _receiptRow("Tanggal", "18 April 2026"),
-                        _receiptRow("Kasir", "Kelompok 4"),
-                        _receiptRow("Metode", "QRIS"),
-                      ],
-                    ),
-                  ),
-                  
-                  // Daftar Item (Mirip Gambar)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 20),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text("PESANAN", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  _itemRow("Signature Americano", "1", "28.000"),
-                  _itemRow("Kopi Gula Aren", "2", "50.000"),
-                  _itemRow("Croissant Almond", "1", "22.000"),
-                  
-                  const SizedBox(height: 20),
-                  const Divider(indent: 20, endIndent: 20),
-                  
-                  // Total
-                  Padding(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      children: [
-                        _totalRow("Subtotal", "100.000"),
-                        _totalRow("Pajak (10%)", "10.000"),
-                        const SizedBox(height: 10),
-                        _totalRow("TOTAL", "110.000", isBold: true),
-                      ],
-                    ),
-                  ),
-                  
-                  // Footer Struk
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 20),
-                    child: Column(
-                      children: [
-                        Text("Terima kasih atas kunjungan Anda!", 
-                          style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: Colors.grey)),
-                        SizedBox(height: 5),
-                        Text("--- SELASAR CAFE ---", 
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-              ),
-            ),
-            const SizedBox(height: 30),
-            
-            // Tombol Simpan/Share
-            ElevatedButton.icon(
-              onPressed: () {},
-              icon: const Icon(Icons.download_rounded),
-              label: const Text("Simpan Sebagai Gambar"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF4A5D3F),
-                minimumSize: const Size(double.infinity, 56),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              ),
-            ),
-          ],
+              const SizedBox(height: 32),
+              _buildActionButtons(context),
+            ],
+          ),
         ),
       ),
     );
   }
 
-  Widget _receiptRow(String label, String value) {
+  PreferredSizeWidget _buildAppBar(BuildContext context) {
+    return AppBar(
+      backgroundColor: Colors.transparent,
+      elevation: 0,
+      centerTitle: true,
+      automaticallyImplyLeading: false, // Hilangin back bawaan
+      title: const Text(
+        "STRUK DIGITAL",
+        style: TextStyle(
+          color: textDark, 
+          fontWeight: FontWeight.w900, 
+          fontSize: 12, 
+          letterSpacing: 2
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReceiptCard() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.06), 
+            blurRadius: 30, 
+            offset: const Offset(0, 15)
+          )
+        ],
+      ),
+      child: Column(
+        children: [
+          const SizedBox(height: 40),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: primaryGreen.withOpacity(0.1),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(Icons.coffee_rounded, color: primaryGreen, size: 32),
+          ),
+          const SizedBox(height: 16),
+          const Text(
+            "SELASAR RUANG",
+            style: TextStyle(
+              fontSize: 22, 
+              fontWeight: FontWeight.w900, 
+              letterSpacing: 4, 
+              color: primaryGreen
+            ),
+          ),
+          Text(
+            "Premium Coffee & Comfort Space",
+            style: TextStyle(
+              fontSize: 10, 
+              color: Colors.grey.shade500, 
+              letterSpacing: 1
+            ),
+          ),
+          
+          const SizedBox(height: 32),
+          _buildZigZagDivider(),
+
+          Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              children: [
+                _receiptDetailRow("No. Pesanan", _generateTransactionID()),
+                _receiptDetailRow("Tanggal", "01 Mei 2026"), // Update ke Mei sesuai progres lo
+                _receiptDetailRow("Waktu", "20:00 WIB"),
+                _receiptDetailRow("Kasir", "Fadilah"),
+                _receiptDetailRow("Metode", "QRIS Selasar"),
+              ],
+            ),
+          ),
+
+          const Divider(indent: 32, endIndent: 32, thickness: 0.8),
+
+          const Padding(
+            padding: EdgeInsets.fromLTRB(32, 24, 32, 16),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text("RINCIAN PESANAN", 
+                style: TextStyle(
+                  fontSize: 10, 
+                  fontWeight: FontWeight.w900, 
+                  color: primaryGreen, 
+                  letterSpacing: 1.5
+                )
+              ),
+            ),
+          ),
+          
+          const _OrderItemRow(name: "Signature Americano", qty: "1", price: "28.000"),
+          const _OrderItemRow(name: "Kopi Gula Aren", qty: "2", price: "50.000"),
+          const _OrderItemRow(name: "Croissant Almond", qty: "1", price: "22.000"),
+
+          const SizedBox(height: 24),
+          _buildZigZagDivider(),
+
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 32),
+            child: Column(
+              children: [
+                _totalDetailRow("Subtotal", "100.000"),
+                _totalDetailRow("Pajak (10%)", "10.000"),
+                const SizedBox(height: 20),
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: primaryGreen,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: _totalDetailRow("TOTAL BAYAR", "110.000", isBold: true, color: Colors.white),
+                ),
+              ],
+            ),
+          ),
+
+          const Icon(Icons.view_week_rounded, size: 60, color: textDark),
+          const SizedBox(height: 8),
+          const Text("TERIMA KASIH", style: TextStyle(fontSize: 10, fontWeight: FontWeight.w800, letterSpacing: 5)),
+          const SizedBox(height: 40),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildZigZagDivider() {
+    return Row(
+      children: List.generate(25, (index) => Expanded(
+        child: Container(
+          height: 6,
+          margin: const EdgeInsets.symmetric(horizontal: 1.5),
+          decoration: BoxDecoration(
+            color: scaffoldBg,
+            borderRadius: BorderRadius.circular(10),
+          ),
+        ),
+      )),
+    );
+  }
+
+  Widget _buildActionButtons(BuildContext context) {
+    return Column(
+      children: [
+        ElevatedButton.icon(
+          onPressed: () {
+            // Trigger download PDF simulasi
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Berhasil mengunduh struk PDF"), backgroundColor: primaryGreen)
+            );
+          },
+          icon: const Icon(Icons.download_rounded),
+          label: const Text("UNDUH PDF", style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: 1)),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: primaryGreen,
+            foregroundColor: Colors.white,
+            minimumSize: const Size(double.infinity, 65),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
+            elevation: 0,
+          ),
+        ),
+        const SizedBox(height: 16),
+        TextButton.icon(
+          onPressed: () => Navigator.pushNamedAndRemoveUntil(context, '/dashboard', (route) => false),
+          icon: const Icon(Icons.home_rounded),
+          label: const Text("KEMBALI KE BERANDA", style: TextStyle(fontWeight: FontWeight.w900, color: primaryGreen)),
+        ),
+      ],
+    );
+  }
+
+  Widget _receiptDetailRow(String label, String value) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: Colors.grey)),
-          Text(value, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          Text(label, style: TextStyle(fontSize: 11, color: Colors.grey.shade600, fontWeight: FontWeight.w500)),
+          Text(value, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: textDark)),
         ],
       ),
     );
   }
 
-  Widget _itemRow(String name, String qty, String price) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 6),
-      child: Row(
-        children: [
-          Text("${qty}x", style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Color(0xFF4A5D3F))),
-          const SizedBox(width: 15),
-          Expanded(child: Text(name, style: const TextStyle(fontSize: 13))),
-          Text("Rp $price", style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-        ],
-      ),
-    );
-  }
-
-  Widget _totalRow(String label, String value, {bool isBold = false}) {
+  Widget _totalDetailRow(String label, String value, {bool isBold = false, Color color = textDark}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(fontSize: isBold ? 16 : 13, fontWeight: isBold ? FontWeight.bold : FontWeight.normal)),
-        Text("Rp $value", style: TextStyle(fontSize: isBold ? 18 : 13, fontWeight: isBold ? FontWeight.bold : FontWeight.w600)),
+        Text(label, style: TextStyle(fontSize: isBold ? 14 : 12, fontWeight: isBold ? FontWeight.w900 : FontWeight.w600, color: color)),
+        Text("Rp $value", style: TextStyle(fontSize: isBold ? 22 : 12, fontWeight: isBold ? FontWeight.w900 : FontWeight.w800, color: color)),
       ],
+    );
+  }
+}
+
+class _OrderItemRow extends StatelessWidget {
+  final String name, qty, price;
+  const _OrderItemRow({required this.name, required this.qty, required this.price});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 8),
+      child: Row(
+        children: [
+          Text("${qty}x", style: const TextStyle(fontWeight: FontWeight.w900, color: ReceiptPage.primaryGreen, fontSize: 13)),
+          const SizedBox(width: 16),
+          Expanded(child: Text(name, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: ReceiptPage.textDark))),
+          Text("Rp $price", style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: ReceiptPage.textDark)),
+        ],
+      ),
     );
   }
 }
