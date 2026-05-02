@@ -1,11 +1,16 @@
-plugins {
-    // Hapus versinya, biarin id-nya aja biar gak bentrok sama Flutter
-    id "com.android.application" apply false
-    id "org.jetbrains.kotlin.android" apply false
-    id "dev.flutter.flutter-gradle-plugin" apply false
-    
-    // Khusus yang ini kasih versi terbaru biar sinkron sama Firebase
-    id "com.google.gms.google-services" version "4.4.1" apply false
+buildscript {
+    // Update ke 2.1.0 sesuai saran terminal lo tadi
+    ext.kotlin_version = '2.1.0' 
+    repositories {
+        google()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.2.1'
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath 'com.google.gms:google-services:4.4.1'
+    }
 }
 
 allprojects {
@@ -19,9 +24,17 @@ rootProject.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir(".
 
 subprojects {
     project.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir(project.name).get())
-}
+    
+    // UPDATE FIX: Paksa semua library pakai SDK 36 biar gak komplain AAR Metadata
+    project.afterEvaluate {
+        if (project.hasProperty('android')) {
+            project.android {
+                compileSdk = 36
+                buildToolsVersion = "36.0.0"
+            }
+        }
+    }
 
-subprojects {
     project.evaluationDependsOn(":app")
 }
 

@@ -26,6 +26,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
   List<Map<String, dynamic>> timeBasedMenus = [];
   String? avatarUrl;
   String staffName = "Fadilah";
+  String userRole = "staff"; // Tambahan variabel role
   StreamSubscription? _stockSubscription;
 
   @override
@@ -47,7 +48,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         .from('menus')
         .stream(primaryKey: ['id']).listen((List<Map<String, dynamic>> data) {
       for (var menu in data) {
-        // ANTI-ERROR: Handle Null values
         int stock = (menu['stock'] ?? 0) as int;
         if (stock < 5 && stock > 0) {
           _sendSystemNotification(menu['name'], stock);
@@ -74,7 +74,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         .stream(primaryKey: ['id'])
         .map((data) => data
             .where((order) => order['created_at'].toString().contains(today))
-            // ANTI-ERROR: Handle Null revenue
             .fold(0, (sum, item) => sum + ((item['total_price'] ?? 0) as int)));
   }
 
@@ -92,13 +91,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
         .map((data) => data.where((m) => ((m['stock'] ?? 0) as int) < 5 && ((m['stock'] ?? 0) as int) > 0).toList());
   }
 
-  void _loadUserProfile() {
+  // UPDATE: Fungsi load profile sekarang ambil role dari tabel profiles
+  Future<void> _loadUserProfile() async {
     final user = Supabase.instance.client.auth.currentUser;
     if (user != null) {
-      setState(() {
-        avatarUrl = user.userMetadata?['avatar_url'];
-        staffName = user.userMetadata?['full_name'] ?? "Fadilah";
-      });
+      try {
+        final data = await Supabase.instance.client
+            .from('profiles')
+            .select('role, full_name')
+            .eq('id', user.id)
+            .single();
+
+        setState(() {
+          avatarUrl = user.userMetadata?['avatar_url'];
+          staffName = data['full_name'] ?? user.userMetadata?['full_name'] ?? "Fadilah";
+          userRole = data['role'] ?? "staff";
+        });
+      } catch (e) {
+        // Fallback jika data profile belum ada
+        setState(() {
+          avatarUrl = user.userMetadata?['avatar_url'];
+          staffName = user.userMetadata?['full_name'] ?? "Fadilah";
+        });
+      }
     }
   }
 
@@ -142,23 +157,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const SizedBox(height: 15),
-                  _buildMainStatsCard(),
+                  // UPDATE: Cuma Admin yang liat kartu Omzet
+                  if (userRole == 'admin') _buildMainStatsCard(),
                   const SizedBox(height: 30),
                   const Text("Akses Manajemen", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.textPrimary)),
                   const SizedBox(height: 15),
                   _buildStatusGrid(),
                   const SizedBox(height: 30),
                   _buildSectionHeader("Rekomendasi Waktu", Icons.access_time_filled),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 15),
                   ...timeBasedMenus.map((menu) => MenuCard(data: menu)),
-                  const SizedBox(height: 25),
+                  const SizedBox(height: 30),
                   
-                  // FITUR: 4 GRID ANALYSIS (Asset Manual sesuai data lo)
                   const Text("Trend Selasar", style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18, color: AppColors.textPrimary)),
                   const SizedBox(height: 15),
                   _buildMenuAnalysisGrid(),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 30),
                   _buildDynamicMenuSections(),
                   const SizedBox(height: 100),
                 ],
@@ -178,14 +193,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       crossAxisCount: 2,
-      mainAxisSpacing: 15,
-      crossAxisSpacing: 15,
-      childAspectRatio: 1.3,
+      mainAxisSpacing: 12,
+      crossAxisSpacing: 12,
+      childAspectRatio: 0.9, 
       children: [
-        _analysisCard("Terlaris", "Amerikano", "assets/images/Amerikano.jpg", Colors.orange),
-        _analysisCard("Terpopuler", "Matcha Latte", "assets/images/matchalatte.webp", Colors.green),
-        _analysisCard("Disukai", "Gula Aren", "assets/images/kopigulaaren.webp", Colors.brown),
-        _analysisCard("Stok Limit", "Aceh Gayo", "assets/images/acehgayov60.png", Colors.red),
+        _analysisCard("TERLARIS", "Amerikano", "assets/images/Amerikano.jpg", Colors.orange),
+        _analysisCard("TERPOPULER", "Matcha Latte", "assets/images/matchalatte.webp", Colors.green),
+        _analysisCard("DISUKAI", "Gula Aren", "assets/images/kopigulaaren.webp", Colors.brown),
+        _analysisCard("STOK LIMIT", "Aceh Gayo", "assets/images/acehgayov60.png", Colors.red),
       ],
     );
   }
@@ -194,25 +209,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return GestureDetector(
       onTap: () => Navigator.pushNamed(context, '/menu'),
       child: Container(
+        clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
-          color: Colors.white, borderRadius: BorderRadius.circular(25),
-          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 10)],
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(30),
+          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 12, offset: const Offset(0, 4))],
         ),
         child: Stack(
           children: [
-            Positioned(right: -10, bottom: -10, child: Opacity(opacity: 0.15, child: Image.asset(img, width: 70))),
+            Positioned.fill(child: Image.asset(img, fit: BoxFit.cover)),
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Colors.black.withOpacity(0.1), Colors.black.withOpacity(0.8)],
+                  ),
+                ),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.all(15),
               child: Column(
+                mainAxisAlignment: MainAxisAlignment.end,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(10)),
-                    child: Text(label, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.bold)),
+                    decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
+                    child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 8, fontWeight: FontWeight.w900, letterSpacing: 0.5)),
                   ),
-                  const SizedBox(height: 8),
-                  Text(menu, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                  const SizedBox(height: 6),
+                  Text(menu, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15, height: 1.1)),
                 ],
               ),
             ),
@@ -342,13 +371,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // UPDATE: Grid sekarang disesuaikan dengan role
   Widget _buildStatusGrid() {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        _statusItem("Laporan", Icons.analytics_rounded, '/report'),
+        if (userRole == 'admin') _statusItem("Laporan", Icons.analytics_rounded, '/report'),
         _statusItem("History", Icons.history_edu_rounded, '/history'),
-        _statusItem("Stok", Icons.inventory_rounded, '/stock_manage'),
+        if (userRole == 'admin') _statusItem("Stok", Icons.inventory_rounded, '/stock_manage'),
         _statusItem("Menu", Icons.restaurant_menu_rounded, '/menu'),
       ],
     );
@@ -412,7 +442,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           IconButton(onPressed: () {}, icon: const Icon(Icons.grid_view_rounded, color: AppColors.primaryGreen)),
           IconButton(onPressed: () => Navigator.pushNamed(context, '/history'), icon: const Icon(Icons.receipt_long_rounded, color: AppColors.textSecondary)),
           const SizedBox(width: 40), 
-          IconButton(onPressed: () => Navigator.pushNamed(context, '/report'), icon: const Icon(Icons.analytics_outlined, color: AppColors.textSecondary)),
+          // Tombol report di bottom nav juga disembunyikan untuk non-admin
+          if (userRole == 'admin') IconButton(onPressed: () => Navigator.pushNamed(context, '/report'), icon: const Icon(Icons.analytics_outlined, color: AppColors.textSecondary)),
           IconButton(onPressed: () => Navigator.pushNamed(context, '/profile'), icon: const Icon(Icons.person_pin_rounded, color: AppColors.textSecondary)),
         ],
       ),

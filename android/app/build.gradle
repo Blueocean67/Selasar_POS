@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace "com.example.selasar_pos"
-    compileSdk 36
+    
+    // UPDATE: Naikkan ke 36 agar sesuai dengan kebutuhan plugin terbaru (2026)
+    compileSdk 36 
     ndkVersion flutter.ndkVersion
 
     compileOptions {
@@ -23,8 +25,10 @@ android {
     defaultConfig {
         applicationId "com.example.selasar_pos"
         
-        // Kunci ke 21 biar plugin Supabase & App Links lo nggak bentrok
+        // Gunakan minimal SDK 21 untuk stabilitas Supabase
         minSdkVersion flutter.minSdkVersion
+        
+        // UPDATE: Naikkan ke 36 agar tidak gagal saat checkReleaseAarMetadata
         targetSdk 36
         
         versionCode flutter.versionCode
@@ -35,8 +39,6 @@ android {
     buildTypes {
         release {
             signingConfig signingConfigs.debug
-            
-            // FIX: Hapus 'is' dan '=' biar nggak error method not found
             minifyEnabled false
             shrinkResources false
         }
