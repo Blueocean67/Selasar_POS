@@ -1,71 +1,73 @@
 name: selasar_pos
-description: "Premium Point of Sale App untuk Selasar Ruang Cafe"
-publish_to: 'none'
-
+description: Premium Point of Sale App untuk Selasar Ruang Cafe
+publish_to: "none"
 version: 1.0.0+1
 
 environment:
-  sdk: ">=3.0.0 <4.0.0"
+  sdk: ">=3.3.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # --- UI, FONTS & ANIMATION ---
-  google_fonts: ^6.1.0
+  cupertino_icons: ^1.0.8
+
+  # UI & Animation
+  google_fonts: ^6.2.1
   flutter_animate: ^4.5.0
   intl: ^0.19.0
-  font_awesome_flutter: ^10.7.0
+  font_awesome_flutter: ^10.8.0
   shimmer: ^3.0.0
-  lottie: ^3.1.0 
-  flutter_svg: ^2.0.10
-  smooth_page_indicator: ^1.1.0
+  lottie: ^3.2.0
+  flutter_svg: ^2.0.10+1
+  smooth_page_indicator: ^1.2.0
   vibration: ^2.0.1
-  flutter_local_notifications: ^17.1.2
+  flutter_local_notifications: ^17.2.2
 
-  # --- DATABASE & AUTH ---
-  firebase_core: ^3.1.0
-  supabase_flutter: ^2.5.0
-  sqflite: ^2.3.0
+  # Database & Auth
+  supabase_flutter: ^2.8.0
+  sqflite: ^2.4.1
   path: ^1.9.0
 
-  # --- REPORT & FILES ---
-  pdf: ^3.10.8
-  printing: ^5.11.0 
-  excel: ^4.0.2
-  path_provider: ^2.1.2
-  open_filex: ^4.4.0
+  # Reports & Files
+  pdf: ^3.11.1
+  printing: ^5.13.4
+  excel: ^4.0.6
+  path_provider: ^2.1.5
+  open_filex: ^4.5.0
 
-  # --- MEDIA & UTILITIES ---
+  # Media, Utilities & Screenshot Save
   image_picker: ^1.1.2
-  mobile_scanner: ^5.0.0
-  url_launcher: ^6.2.5
-  share_plus: ^9.0.0
+  mobile_scanner: ^6.0.2
+  url_launcher: ^6.3.1
+  share_plus: ^10.1.2
+  provider: ^6.1.1
+  screenshot: ^3.0.0
+  permission_handler: ^11.3.1
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^3.0.0
-  flutter_launcher_icons: ^0.13.1 
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.1
 
 flutter:
   uses-material-design: true
-  
+
   assets:
     - assets/images/
     - assets/lottie/
-    - assets/icons/
 
   fonts:
     - family: PlusJakartaSans
       fonts:
         - asset: assets/fonts/PlusJakartaSans-VariableFont_wght.ttf
 
-# --- KONFIGURASI ICON ---
+# Konfigurasi launcher icons akhir
 flutter_launcher_icons:
-  android: "launcher_icon"
+  android: true
   ios: true
   image_path: "assets/images/SelasarLogo.png"
   min_sdk_android: 21
-  adaptive_icon_background: "#F8F9F2" 
+  adaptive_icon_background: "#F8F9F2"
   adaptive_icon_foreground: "assets/images/SelasarLogo.png"

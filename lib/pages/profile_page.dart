@@ -21,10 +21,16 @@ class _ProfilePageState extends State<ProfilePage> {
   bool _isUploading = false;
   bool _isLoading = true;
 
-  // State Settings
-  String selectedRole = "Kasir Utama";
+  // State Settings (Source of Truth disinkronisasikan langsung dari Database Supabase)
+  String selectedRole = "kasir"; 
   String selectedShift = "Sore (15:00 - 22:00)"; 
+  String? avatarUrl;
+  String fullName = "Staff Selasar";
   bool isEnglish = false; 
+
+  // Security Helper Getters berdasarkan data riil Database
+  bool get isAdmin => selectedRole.trim().toLowerCase() == 'admin';
+  bool get isCashier => selectedRole.trim().toLowerCase() == 'kasir';
 
   @override
   void initState() {
@@ -32,17 +38,71 @@ class _ProfilePageState extends State<ProfilePage> {
     _loadUserData();
   }
 
-  void _loadUserData() {
-    final user = Supabase.instance.client.auth.currentUser;
-    if (user != null) {
-      setState(() {
+  @override
+  void dispose() {
+    _passController.dispose();
+    super.dispose();
+  }
+
+  // --- SINKRONISASI TOTAL DENGAN DATABASE SUPABASE ---
+  Future<void> _loadUserData() async {
+    try {
+      final user = Supabase.instance.client.auth.currentUser;
+      if (user != null) {
         _user = user;
-        _isLoading = false;
-      });
+        
+        // Ambil data real-time dari tabel 'profiles' berdasarkan ID pengguna
+        final data = await Supabase.instance.client
+            .from('profiles')
+            .select('role, avatar_url, full_name')
+            .eq('id', user.id)
+            .maybeSingle();
+
+        if (data != null && mounted) {
+          setState(() {
+            // Normalisasi role ke lowercase mutlak ('admin' / 'kasir')
+            String dbRole = (data['role'] ?? user.userMetadata?['role'] ?? "kasir").toString().trim().toLowerCase();
+            if (dbRole != 'admin' && dbRole != 'kasir') {
+              dbRole = 'kasir'; // Default fallback aman jika role tidak valid
+            }
+            selectedRole = dbRole;
+            avatarUrl = data['avatar_url'] ?? user.userMetadata?['avatar_url'];
+            fullName = data['full_name'] ?? user.userMetadata?['full_name'] ?? "Staff Selasar";
+            _isLoading = false;
+          });
+        } else {
+          // Fallback jika data di tabel profiles belum dibuat
+          if (mounted) {
+            setState(() {
+              String metaRole = (user.userMetadata?['role'] ?? "kasir").toString().trim().toLowerCase();
+              if (metaRole != 'admin' && metaRole != 'kasir') {
+                metaRole = 'kasir';
+              }
+              selectedRole = metaRole;
+              avatarUrl = user.userMetadata?['avatar_url'];
+              fullName = user.userMetadata?['full_name'] ?? "Staff Selasar";
+              _isLoading = false;
+            });
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Gagal sinkronisasi data profil: $e");
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   String t(String id, String en) => isEnglish ? en : id;
+
+  // --- HARD PROTECTION HELPER FUNCTION ---
+  void blockedAccess() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(t("Akses ditolak. Fitur khusus admin.", "Access denied. Admin exclusive feature.")),
+        backgroundColor: Colors.redAccent,
+      ),
+    );
+  }
 
   // --- UPDATE PASSWORD ---
   Future<void> _updatePassword() async {
@@ -60,71 +120,240 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  // --- PDF REPORT (ANTI-RED FIX) ---
+  // --- PDF REPORT (HARD PROTECTED FOR ADMIN ONLY - COMBINED LIVE BUSINESS REPORT) ---
   Future<void> _downloadReport() async {
+    if (!isAdmin) {
+      blockedAccess();
+      return;
+    }
+
+    // Tampilkan loading indicator saat fetch data database untuk PDF
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator(color: Color(0xFF4A5D3F))),
+    );
+
+    double totalRevenue = 0;
+    int totalTransactions = 0;
+    int totalItemsSold = 0;
+    String topProduct = "-";
+    List<Map<String, dynamic>> transactionList = [];
+
+    try {
+      // Ambil data transaksi riil dari database Supabase (Sinkron dengan menu & payment success)
+      final response = await Supabase.instance.client
+          .from('transactions')
+          .select('id, created_at, total_price, payment_status, cashier_name, items_count, product_summary')
+          .order('created_at', ascending: false);
+
+      if (response != null && response is List) {
+        totalTransactions = response.length;
+        Map<String, int> productCounts = {};
+
+        for (var tx in response) {
+          double price = double.tryParse(tx['total_price'].toString()) ?? 0.0;
+          totalRevenue += price;
+          
+          int items = int.tryParse(tx['items_count'].toString()) ?? 1;
+          totalItemsSold += items;
+
+          // Parsing produk terlaris jika ada summary / tracking item
+          if (tx['product_summary'] != null) {
+            String summary = tx['product_summary'].toString();
+            List<String> itemsList = summary.split(',');
+            for (var item in itemsList) {
+              String name = item.split('(')[0].trim();
+              if (name.isNotEmpty) {
+                productCounts[name] = (productCounts[name] ?? 0) + items;
+              }
+            }
+          }
+
+          transactionList.add({
+            'date': tx['created_at'] != null ? DateFormat('dd/MM/yy HH:mm').format(DateTime.parse(tx['created_at'])) : '-',
+            'cashier': tx['cashier_name'] ?? 'Staff',
+            'status': tx['payment_status'] ?? 'SUCCESS',
+            'total': price,
+          });
+        }
+
+        if (productCounts.isNotEmpty) {
+          var sortedProducts = productCounts.entries.toList()..sort((a, b) => b.value.compareTo(a.value));
+          topProduct = sortedProducts.first.key;
+        }
+      }
+    } catch (e) {
+      debugPrint("Gagal mengambil live data untuk PDF: $e");
+    }
+
+    // Tutup loading dialog
+    if (mounted) Navigator.pop(context);
+
     final pdf = pw.Document();
-    final String fullName = _user?.userMetadata?['full_name'] ?? "Staff Selasar";
-    final dateNow = DateFormat('dd MMMM yyyy').format(DateTime.now());
+    final dateNow = DateFormat('dd MMMM yyyy HH:mm').format(DateTime.now());
+    final currencyFormatter = NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0);
 
     pdf.addPage(
-      pw.Page(
+      pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(40),
+        margin: const pw.EdgeInsets.all(35),
         build: (pw.Context context) {
-          return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              // HEADER BRANDED
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.start,
-                    children: [
-                      pw.Text("SELASAR RUANG", style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
-                      pw.Text("Laporan Personal Staf", style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey)),
-                    ],
-                  ),
-                  pw.Container(
-                    height: 40, width: 40,
-                    decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF4A5D3F), shape: pw.BoxShape.circle),
-                    child: pw.Center(child: pw.Text("SR", style: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold))),
-                  ),
-                ],
-              ),
-              pw.SizedBox(height: 15),
-              pw.Divider(thickness: 1, color: const PdfColor.fromInt(0xFF4A5D3F)),
-              pw.SizedBox(height: 25),
-
-              // DATA PERSONAL
-              pw.Text("RINGKASAN PROFIL KERJA", style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 15),
-              pw.Container(
-                padding: const pw.EdgeInsets.all(15),
-                decoration: pw.BoxDecoration(color: PdfColors.grey100, borderRadius: pw.BorderRadius.circular(10)),
-                child: pw.Column(
+          return [
+            // HEADER TOKO
+            pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    _pdfRow("Nama Lengkap", fullName),
-                    _pdfRow("Email Terdaftar", _user?.email ?? "-"),
-                    _pdfRow("Jabatan", selectedRole),
-                    _pdfRow("Shift Aktif", selectedShift),
-                    _pdfRow("Tgl Cetak", dateNow),
+                    pw.Text("SELASAR RUANG", style: pw.TextStyle(fontSize: 26, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
+                    pw.Text("Laporan Konsolidasi Bisnis & Aktivitas Staf", style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
                   ],
                 ),
-              ),
-              pw.SizedBox(height: 50),
-              pw.Spacer(),
-              pw.Divider(thickness: 0.5, color: PdfColors.grey300),
-              pw.Text(
-                "Dokumen ini dihasilkan secara sah oleh sistem manajemen Selasar POS.", 
-                style: pw.TextStyle(
-                  fontSize: 8, 
-                  fontStyle: pw.FontStyle.italic, 
-                  color: PdfColors.grey600, // GANTI KE color: AGAR ANTI-MERAH
+                pw.Container(
+                  height: 45, width: 45,
+                  decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF4A5D3F), shape: pw.BoxShape.circle),
+                  child: pw.Center(child: pw.Text("SR", style: pw.TextStyle(color: PdfColors.white, fontSize: 16, fontWeight: pw.FontWeight.bold))),
                 ),
+              ],
+            ),
+            pw.SizedBox(height: 10),
+            pw.Divider(thickness: 1.5, color: const PdfColor.fromInt(0xFF4A5D3F)),
+            pw.SizedBox(height: 15),
+
+            // INFO ADMIN & KASIR (AKSES INTEGRASI)
+            pw.Text("INFO OTORISASI & AKUN", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
+            pw.SizedBox(height: 6),
+            pw.Container(
+              padding: const pw.EdgeInsets.all(12),
+              decoration: pw.BoxDecoration(color: PdfColors.grey100, borderRadius: pw.BorderRadius.circular(8)),
+              child: pw.Column(
+                children: [
+                  _pdfRow("Nama Penanggung Jawab (Admin)", fullName),
+                  _pdfRow("Email Terdaftar", _user?.email ?? "-"),
+                  _pdfRow("Status Otorisasi Dokumen", "ADMINISTRATOR (FULL ACCESS)"),
+                  _pdfRow("Cakupan Laporan", "Semua Aktivitas Kasir & Admin "),
+                  _pdfRow("Shift Pemantauan", selectedShift),
+                  _pdfRow("Tanggal Cetak Sistem", dateNow),
+                ],
               ),
-            ],
-          );
+            ),
+            pw.SizedBox(height: 20),
+
+            // RINGKASAN PENJUALAN & AKTIVITAS
+            pw.Text("RINGKASAN EKSEKUTIF PENJUALAN", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
+            pw.SizedBox(height: 6),
+            pw.Row(
+              children: [
+                pw.Expanded(
+                  child: pw.Container(
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey300), borderRadius: pw.BorderRadius.circular(6)),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text("TOTAL PENDAPATAN", style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+                        pw.SizedBox(height: 4),
+                        pw.Text(currencyFormatter.format(totalRevenue), style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
+                      ],
+                    ),
+                  ),
+                ),
+                pw.SizedBox(width: 10),
+                pw.Expanded(
+                  child: pw.Container(
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey300), borderRadius: pw.BorderRadius.circular(6)),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text("TOTAL TRANSAKSI", style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+                        pw.SizedBox(height: 4),
+                        pw.Text("$totalTransactions Transaksi", style: pw.TextStyle(fontSize: 13, fontWeight: pw.FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 10),
+
+            // STATISTIK SEDERHANA
+            pw.Row(
+              children: [
+                pw.Expanded(
+                  child: pw.Container(
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey300), borderRadius: pw.BorderRadius.circular(6)),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text("PRODUK TERLARIS", style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+                        pw.SizedBox(height: 4),
+                        pw.Text(topProduct, style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+                pw.SizedBox(width: 10),
+                pw.Expanded(
+                  child: pw.Container(
+                    padding: const pw.EdgeInsets.all(10),
+                    decoration: pw.BoxDecoration(border: pw.Border.all(color: PdfColors.grey300), borderRadius: pw.BorderRadius.circular(6)),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text("JUMLAH ITEM TERJUAL", style: const pw.TextStyle(fontSize: 8, color: PdfColors.grey600)),
+                        pw.SizedBox(height: 4),
+                        pw.Text("$totalItemsSold Unit Produk", style: pw.TextStyle(fontSize: 11, fontWeight: pw.FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            pw.SizedBox(height: 20),
+
+            // TABEL TRANSAKSI LIVE KASIR & ADMIN
+            pw.Text("LOG HISTORI TRANSAKSI TERBARU", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
+            pw.SizedBox(height: 6),
+            transactionList.isEmpty
+                ? pw.Padding(
+                    padding: const pw.EdgeInsets.symmetric(vertical: 10),
+                    child: pw.Text("Belum ada data transaksi masuk di database.", style: pw.TextStyle(fontSize: 10, fontStyle: pw.FontStyle.italic, color: PdfColors.grey500)),
+                  )
+                : pw.Table(
+                    border: pw.TableBorder.all(color: PdfColors.grey200, width: 0.5),
+                    children: [
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF4A5D3F)),
+                        children: [
+                          pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("Waktu", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 9))),
+                          pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("Operator (Kasir/Admin)", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 9))),
+                          pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("Status", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 9))),
+                          pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text("Total Billing", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: PdfColors.white, fontSize: 9), textAlign: pw.TextAlign.right)),
+                        ],
+                      ),
+                      ...transactionList.take(15).map((tx) => pw.TableRow(
+                            children: [
+                              pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(tx['date'], style: const pw.TextStyle(fontSize: 9))),
+                              pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(tx['cashier'], style: const pw.TextStyle(fontSize: 9))),
+                              pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(tx['status'], style: pw.TextStyle(fontSize: 8, fontWeight: pw.FontWeight.bold, color: PdfColors.green800))),
+                              pw.Padding(padding: const pw.EdgeInsets.all(6), child: pw.Text(currencyFormatter.format(tx['total']), style: const pw.TextStyle(fontSize: 9), textAlign: pw.TextAlign.right)),
+                            ],
+                          )),
+                    ],
+                  ),
+            
+            pw.SizedBox(height: 30),
+            pw.Divider(thickness: 0.5, color: PdfColors.grey400),
+            pw.Align(
+              alignment: pw.Alignment.centerRight,
+              child: pw.Text("Dokumen ini dihasilkan secara sah & otomatis oleh sistem manajemen Selasar POS.", 
+                style: pw.TextStyle(fontSize: 7, fontStyle: pw.FontStyle.italic, color: PdfColors.grey600)),
+            ),
+          ];
         },
       ),
     );
@@ -133,12 +362,12 @@ class _ProfilePageState extends State<ProfilePage> {
 
   pw.Widget _pdfRow(String label, String value) {
     return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 4),
+      padding: const pw.EdgeInsets.symmetric(vertical: 3),
       child: pw.Row(
         mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
         children: [
-          pw.Text(label, style: const pw.TextStyle(fontSize: 10, color: PdfColors.grey700)),
-          pw.Text(value, style: pw.TextStyle(fontSize: 10, fontWeight: pw.FontWeight.bold)),
+          pw.Text(label, style: const pw.TextStyle(fontSize: 9, color: PdfColors.grey700)),
+          pw.Text(value, style: pw.TextStyle(fontSize: 9, fontWeight: pw.FontWeight.bold)),
         ],
       ),
     );
@@ -166,10 +395,14 @@ class _ProfilePageState extends State<ProfilePage> {
         String label = "Shift";
         int hour = start.hour;
         if (hour >= 5 && hour < 11) {
-          label = "Pagi";
-        } else if (hour >= 11 && hour < 15) label = "Siang";
-        else if (hour >= 15 && hour < 21) label = "Sore";
-        else label = "Malam";
+          label = isEnglish ? "Morning" : "Pagi";
+        } else if (hour >= 11 && hour < 15) {
+          label = isEnglish ? "Afternoon" : "Siang";
+        } else if (hour >= 15 && hour < 21) {
+          label = isEnglish ? "Evening" : "Sore";
+        } else {
+          label = isEnglish ? "Night" : "Malam";
+        }
 
         setState(() {
           selectedShift = "$label ($startTime - $endTime)";
@@ -178,6 +411,44 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
+  // --- UPDATE JABATAN DI DATABASE (HARD PROTECTED FOR ADMIN ONLY) ---
+  Future<void> _updateRoleInDatabase(String newRole) async {
+    if (!isAdmin) {
+      blockedAccess();
+      return;
+    }
+
+    final String normalizedRole = newRole.trim().toLowerCase();
+    if (normalizedRole != 'admin' && normalizedRole != 'kasir') return;
+
+    setState(() => _isLoading = true);
+    try {
+      // Update di tabel profiles Supabase
+      await Supabase.instance.client
+          .from('profiles')
+          .update({'role': normalizedRole})
+          .eq('id', _user!.id);
+
+      // Sinkronkan juga ke User Metadata lokal agar aman
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(data: {'role': normalizedRole}),
+      );
+
+      await _loadUserData(); // Reload ulang dari DB
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(t("Jabatan berhasil diubah ke $normalizedRole!", "Role updated to $normalizedRole!")),
+          backgroundColor: const Color(0xFF4A5D3F),
+        ));
+      }
+    } catch (e) {
+      debugPrint("Gagal ganti role: $e");
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // --- HANDLE PHOTO UPLOAD & SYNC DATABASE ---
   Future<void> _handlePhotoAction(ImageSource source) async {
     final picker = ImagePicker();
     final XFile? pickedFile = await picker.pickImage(source: source, imageQuality: 50);
@@ -189,13 +460,24 @@ class _ProfilePageState extends State<ProfilePage> {
         final fileName = '$userId/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final file = File(pickedFile.path);
 
+        // Upload ke storage bucket 'avatars'
         await Supabase.instance.client.storage.from('avatars').upload(fileName, file, fileOptions: const FileOptions(upsert: true));
+        
+        // Dapatkan Public URL resmi
         final String publicUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(fileName);
         
+        // 1. Simpan ke Tabel Database 'profiles'
+        await Supabase.instance.client.from('profiles').update({'avatar_url': publicUrl}).eq('id', userId);
+
+        // 2. Simpan ke User Metadata Auth
         await Supabase.instance.client.auth.updateUser(UserAttributes(data: {'avatar_url': publicUrl}));
-        _loadUserData(); 
+        
+        await _loadUserData(); 
       } catch (e) {
         debugPrint("Upload Error: $e");
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Upload failed: $e"), backgroundColor: Colors.red));
+        }
       } finally {
         if (mounted) setState(() => _isUploading = false);
       }
@@ -226,12 +508,36 @@ class _ProfilePageState extends State<ProfilePage> {
             _buildPremiumHeader(),
             const SizedBox(height: 25),
             
-            _buildSectionTitle(t("DOKUMEN & LAPORAN", "DOCUMENTS & REPORTS")),
-            _profileTile(Icons.picture_as_pdf_rounded, t("Unduh Laporan Kerja", "Download Work Report"), t("File PDF Branded Selasar", "Selasar Branded PDF"), _downloadReport),
+            // DOKUMEN & LAPORAN SECTION: Hanya di-render jika role == admin (Hilang total jika kasir)
+            if (isAdmin) ...[
+              _buildSectionTitle(t("DOKUMEN & LAPORAN", "DOCUMENTS & REPORTS")),
+              _profileTile(Icons.picture_as_pdf_rounded, t("Unduh Laporan Kerja", "Download Work Report"), t("File PDF Branded Selasar", "Selasar Branded PDF"), _downloadReport),
+              const SizedBox(height: 25),
+            ],
             
-            const SizedBox(height: 25),
             _buildSectionTitle(t("PENGATURAN KERJA", "WORK SETTINGS")),
-            _profileTile(Icons.badge_outlined, t("Jabatan", "Role"), selectedRole, () => _showPicker(t("Jabatan", "Role"), ["Kasir Utama", "Admin", "Staff"], (val) => setState(() => selectedRole = val))),
+            
+            _profileTile(
+              Icons.badge_outlined, 
+              t("Jabatan", "Role"), 
+              selectedRole == 'admin' ? t("Admin", "Admin") : t("Kasir", "Cashier"), 
+              () {
+                // Proteksi navigasi manual: Menu jabatan terkunci total untuk Kasir
+                if (!isAdmin) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(t("Jabatan Anda dikunci oleh Sistem Database!", "Your role is locked by the Database System!")),
+                    backgroundColor: Colors.orange.shade800,
+                  ));
+                } else {
+                  // Jika Admin, tampilkan sheet penggantian pilihan role
+                  _showPicker(t("Jabatan", "Role"), [t("Kasir", "Cashier"), t("Admin", "Admin")], (val) {
+                    // Konversi kembali dari label bahasa lokal/global ke real value database
+                    String targetRole = (val == "Admin" || val == "Admin") ? "admin" : "kasir";
+                    _updateRoleInDatabase(targetRole);
+                  });
+                }
+              }
+            ),
             
             _profileTile(
               Icons.history_toggle_off_rounded, 
@@ -255,9 +561,6 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   Widget _buildPremiumHeader() {
-    String? avatarUrl = _user?.userMetadata?['avatar_url'];
-    String fullName = _user?.userMetadata?['full_name'] ?? "Staff Selasar";
-
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 40, horizontal: 20),
       decoration: const BoxDecoration(
@@ -278,7 +581,7 @@ class _ProfilePageState extends State<ProfilePage> {
                   child: CircleAvatar(
                     radius: 65,
                     backgroundColor: const Color(0xFFEDF0E9),
-                    backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl) : null,
+                    backgroundImage: avatarUrl != null ? NetworkImage(avatarUrl!) : null,
                     child: avatarUrl == null 
                         ? const Icon(Icons.person_rounded, size: 60, color: Colors.grey) 
                         : null,
@@ -319,7 +622,7 @@ class _ProfilePageState extends State<ProfilePage> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Text("Masukkan password baru minimal 6 karakter.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+            Text(t("Masukkan password baru minimal 6 karakter.", "Enter a new password with at least 6 characters."), style: const TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 15),
             TextField(
               controller: _passController, 
@@ -342,7 +645,7 @@ class _ProfilePageState extends State<ProfilePage> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)
             ), 
-            child: const Text("SIMPAN PASSWORD", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
+            child: Text(t("SIMPAN PASSWORD", "SAVE PASSWORD"), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))
           ),
         ],
       ),
@@ -440,7 +743,6 @@ class _ProfilePageState extends State<ProfilePage> {
               title: Text(t("Pilih dari Galeri", "Choose from Gallery")),
               onTap: () { Navigator.pop(context); _handlePhotoAction(ImageSource.gallery); },
             ),
-            const SizedBox(height: 10),
           ],
         ),
       ),

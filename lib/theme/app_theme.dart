@@ -1,94 +1,127 @@
 import 'package:flutter/material.dart';
-import 'app_colors.dart'; 
+import 'app_colors.dart';
 
 class AppTheme {
-  static ThemeData get lightTheme {
-    return ThemeData(
-      useMaterial3: true,
+  static ThemeData lightTheme = ThemeData(
+    useMaterial3: true,
+    fontFamily: 'Poppins',
+    scaffoldBackgroundColor: AppColors.creamBg,
+
+    colorScheme: const ColorScheme(
       brightness: Brightness.light,
-      primaryColor: AppColors.primaryOlive,
-      scaffoldBackgroundColor: AppColors.background,
-      fontFamily: 'PlusJakartaSans', 
+      primary: AppColors.olivePrimary,
+      onPrimary: Colors.white,
+      secondary: AppColors.oliveSoft,
+      onSecondary: Colors.white,
+      error: Colors.redAccent,
+      onError: Colors.white,
+      surface: AppColors.cardBg,
+      onSurface: AppColors.textPrimary,
+    ),
 
-      // Skema Warna Global
-      colorScheme: ColorScheme.fromSeed(
-        seedColor: AppColors.primaryOlive,
-        primary: AppColors.primaryOlive,
-        secondary: AppColors.accentGold,
-        tertiary: AppColors.primaryDark, // Untuk elemen branding gelap
-        surface: AppColors.background,
-        onSurface: AppColors.textPrimary,
+    appBarTheme: const AppBarTheme(
+      backgroundColor: AppColors.creamBg,
+      elevation: 0,
+      centerTitle: false,
+      iconTheme: IconThemeData(
+        color: AppColors.oliveDark,
       ),
-
-      // Gaya AppBar
-      appBarTheme: const AppBarTheme(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        centerTitle: true,
-        iconTheme: IconThemeData(color: AppColors.primaryDark),
-        titleTextStyle: TextStyle(
-          color: AppColors.primaryDark,
-          fontSize: 18,
-          fontWeight: FontWeight.bold,
-        ),
+      titleTextStyle: TextStyle(
+        color: AppColors.oliveDark,
+        fontSize: 22,
+        fontWeight: FontWeight.w800,
       ),
+    ),
 
-      // Gaya Card
-      cardTheme: CardThemeData(
-        color: AppColors.cardBg,
-        surfaceTintColor: Colors.transparent,
+    cardTheme: CardThemeData(
+      color: AppColors.cardBg,
+      elevation: 0,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(28),
+        side: const BorderSide(color: AppColors.surfaceNeutral, width: 1),
+      ),
+    ),
+
+    // Style untuk Input Field (Email/Password di Login)
+    inputDecorationTheme: InputDecorationTheme(
+      filled: true,
+      fillColor: AppColors.surfaceNeutral,
+      hintStyle: const TextStyle(
+        color: AppColors.textMuted,
+        fontSize: 14,
+      ),
+      contentPadding: const EdgeInsets.symmetric(
+        horizontal: 24,
+        vertical: 20,
+      ),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide.none,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(18),
+        borderSide: const BorderSide(color: AppColors.oliveSoft, width: 1.5),
+      ),
+    ),
+
+    elevatedButtonTheme: ElevatedButtonThemeData(
+      style: ElevatedButton.styleFrom(
         elevation: 0,
+        foregroundColor: Colors.white,
+        backgroundColor: AppColors.loginButton, // Menggunakan 3D5C3A sesuai kode Anda
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(24),
-          side: BorderSide(color: Colors.black.withOpacity(0.04)),
-        ),
-      ),
-
-      // Gaya Input Form
-      inputDecorationTheme: InputDecorationTheme(
-        filled: true,
-        fillColor: const Color(0xFFF1F3EE), // Sedikit lebih terang
-        hintStyle: const TextStyle(color: AppColors.inputHint, fontSize: 14),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
-        border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(16),
-          borderSide: BorderSide.none,
         ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AppColors.primaryOlive, width: 1.5),
+        padding: const EdgeInsets.symmetric(
+          vertical: 18,
+        ),
+        textStyle: const TextStyle(
+          fontWeight: FontWeight.w700,
+          fontSize: 16,
+          letterSpacing: 1.1,
         ),
       ),
+    ),
 
-      // Gaya Tombol Utama (Warna Olive sesuai Gambar Desain)
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          backgroundColor: AppColors.primaryOlive,
-          foregroundColor: Colors.white,
-          minimumSize: const Size(double.infinity, 56),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          textStyle: const TextStyle(
-            fontWeight: FontWeight.bold, 
-            fontSize: 16,
-            letterSpacing: 0.5,
-          ),
-          elevation: 0,
-        ),
+    textTheme: const TextTheme(
+      headlineLarge: TextStyle(
+        fontSize: 32,
+        fontWeight: FontWeight.w800,
+        color: AppColors.oliveDark,
       ),
+      headlineMedium: TextStyle(
+        fontSize: 26,
+        fontWeight: FontWeight.w700,
+        color: AppColors.oliveDark,
+      ),
+      titleLarge: TextStyle(
+        fontSize: 20,
+        fontWeight: FontWeight.w700,
+        color: AppColors.textPrimary,
+      ),
+      bodyLarge: TextStyle(
+        fontSize: 16,
+        color: AppColors.textSecondary,
+      ),
+      bodyMedium: TextStyle(
+        fontSize: 14,
+        color: AppColors.textMuted,
+      ),
+    ),
 
-      // Gaya Teks Global
-      textTheme: const TextTheme(
-        headlineMedium: TextStyle(
-          color: AppColors.textPrimary, 
-          fontWeight: FontWeight.w900,
-          letterSpacing: -0.5,
-        ),
-        titleLarge: TextStyle(
-          color: AppColors.textPrimary, 
-          fontWeight: FontWeight.bold,
-        ),
-        bodyMedium: TextStyle(color: AppColors.textSecondary),
-      ),
-    );
-  }
+    bottomNavigationBarTheme: const BottomNavigationBarThemeData(
+      backgroundColor: Colors.white,
+      selectedItemColor: AppColors.olivePrimary,
+      unselectedItemColor: AppColors.textMuted,
+      showSelectedLabels: true,
+      showUnselectedLabels: true,
+      type: BottomNavigationBarType.fixed,
+    ),
+
+    dividerColor: AppColors.surfaceSoft,
+  );
 }

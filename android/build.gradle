@@ -1,5 +1,4 @@
 buildscript {
-    // Update ke 2.1.0 sesuai saran terminal lo tadi
     ext.kotlin_version = '2.1.0' 
     repositories {
         google()
@@ -20,12 +19,14 @@ allprojects {
     }
 }
 
+// Set build directory untuk root project secara aman
 rootProject.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir("../../build").get())
 
 subprojects {
-    project.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir(project.name).get())
+    // FIX SINTAKS: Set build directory untuk setiap subproject tanpa memicu kegagalan .get() awal
+    project.layout.buildDirectory.value(rootProject.layout.buildDirectory.dir(project.name))
     
-    // UPDATE FIX: Paksa semua library pakai SDK 36 biar gak komplain AAR Metadata
+    // UPDATE FIX: Paksa semua library pakai SDK 34/35/36 secara aman biar gak komplain AAR Metadata
     project.afterEvaluate {
         if (project.hasProperty('android')) {
             project.android {
@@ -34,9 +35,11 @@ subprojects {
             }
         }
     }
-
-    project.evaluationDependsOn(":app")
 }
+
+// FIX POSITION: evaluationDependsOn wajib ditaruh di luar block subprojects!
+// Ini agar root project tahu bahwa evaluasi global membutuhkan persiapan modul utama aplikasi
+rootProject.evaluationDependsOn(":app")
 
 tasks.register("clean", Delete) {
     delete rootProject.layout.buildDirectory
