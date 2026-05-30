@@ -26,6 +26,7 @@ class _ProfilePageState extends State<ProfilePage> {
   String selectedShift = "Sore (15:00 - 22:00)"; 
   String? avatarUrl;
   String fullName = "Staff Selasar";
+  String userEmail = ""; // Menyimpan email hasil sinkronisasi database profiles
   bool isEnglish = false; 
 
   // Security Helper Getters berdasarkan data riil Database
@@ -44,51 +45,67 @@ class _ProfilePageState extends State<ProfilePage> {
     super.dispose();
   }
 
-  // --- SINKRONISASI TOTAL DENGAN DATABASE SUPABASE ---
+  // --- SINKRONISASI TOTAL DENGAN DATABASE SUPABASE (FIXED EMAIL BUG) ---
   Future<void> _loadUserData() async {
     try {
       final user = Supabase.instance.client.auth.currentUser;
       if (user != null) {
         _user = user;
         
-        // Ambil data real-time dari tabel 'profiles' berdasarkan ID pengguna
+        // Ambil data dari tabel profiles dengan proteksi timeout 3 detik
         final data = await Supabase.instance.client
             .from('profiles')
-            .select('role, avatar_url, full_name')
+            .select('role, avatar_url, full_name, email')
             .eq('id', user.id)
-            .maybeSingle();
+            .maybeSingle()
+            .timeout(const Duration(seconds: 3));
 
         if (data != null && mounted) {
           setState(() {
-            // Normalisasi role ke lowercase mutlak ('admin' / 'kasir')
-            String dbRole = (data['role'] ?? user.userMetadata?['role'] ?? "kasir").toString().trim().toLowerCase();
+            // 1. Normalisasi role ke lowercase mutlak
+            String dbRole = (data['role'] ?? "kasir").toString().trim().toLowerCase();
             if (dbRole != 'admin' && dbRole != 'kasir') {
-              dbRole = 'kasir'; // Default fallback aman jika role tidak valid
+              dbRole = 'kasir'; 
             }
             selectedRole = dbRole;
-            avatarUrl = data['avatar_url'] ?? user.userMetadata?['avatar_url'];
-            fullName = data['full_name'] ?? user.userMetadata?['full_name'] ?? "Staff Selasar";
+            avatarUrl = data['avatar_url'];
+            fullName = data['full_name'] ?? "Staff Selasar";
+            
+            // FIX: Prioritaskan email dari database, jika null/kosong, paksa pakai email dari Supabase Auth
+            if (data['email'] != null && data['email'].toString().isNotEmpty) {
+              userEmail = data['email'].toString();
+            } else {
+              userEmail = user.email ?? "";
+            }
+            
             _isLoading = false;
           });
-        } else {
-          // Fallback jika data di tabel profiles belum dibuat
-          if (mounted) {
-            setState(() {
-              String metaRole = (user.userMetadata?['role'] ?? "kasir").toString().trim().toLowerCase();
-              if (metaRole != 'admin' && metaRole != 'kasir') {
-                metaRole = 'kasir';
-              }
-              selectedRole = metaRole;
-              avatarUrl = user.userMetadata?['avatar_url'];
-              fullName = user.userMetadata?['full_name'] ?? "Staff Selasar";
-              _isLoading = false;
-            });
-          }
+          return; 
         }
+      }
+      
+      // Fallback lokal super cepat jika user session kosong atau database offline
+      if (mounted) {
+        setState(() {
+          String metaRole = (_user?.userMetadata?['role'] ?? "kasir").toString().trim().toLowerCase();
+          if (metaRole != 'admin' && metaRole != 'kasir') {
+            metaRole = 'kasir';
+          }
+          selectedRole = metaRole;
+          avatarUrl = _user?.userMetadata?['avatar_url'];
+          fullName = _user?.userMetadata?['full_name'] ?? "Staff Selasar";
+          userEmail = _user?.email ?? "";
+          _isLoading = false;
+        });
       }
     } catch (e) {
       debugPrint("Gagal sinkronisasi data profil: $e");
-      if (mounted) setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() {
+          userEmail = _user?.email ?? "";
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -120,14 +137,13 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  // --- PDF REPORT (HARD PROTECTED FOR ADMIN ONLY - COMBINED LIVE BUSINESS REPORT) ---
+  // --- PDF REPORT (HARD PROTECTED FOR ADMIN ONLY) ---
   Future<void> _downloadReport() async {
     if (!isAdmin) {
       blockedAccess();
       return;
     }
 
-    // Tampilkan loading indicator saat fetch data database untuk PDF
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -141,11 +157,12 @@ class _ProfilePageState extends State<ProfilePage> {
     List<Map<String, dynamic>> transactionList = [];
 
     try {
-      // Ambil data transaksi riil dari database Supabase (Sinkron dengan menu & payment success)
       final response = await Supabase.instance.client
           .from('transactions')
           .select('id, created_at, total_price, payment_status, cashier_name, items_count, product_summary')
-          .order('created_at', ascending: false);
+          .order('created_at', ascending: false)
+          .limit(30)
+          .timeout(const Duration(seconds: 5));
 
       if (response != null && response is List) {
         totalTransactions = response.length;
@@ -158,7 +175,6 @@ class _ProfilePageState extends State<ProfilePage> {
           int items = int.tryParse(tx['items_count'].toString()) ?? 1;
           totalItemsSold += items;
 
-          // Parsing produk terlaris jika ada summary / tracking item
           if (tx['product_summary'] != null) {
             String summary = tx['product_summary'].toString();
             List<String> itemsList = summary.split(',');
@@ -187,7 +203,6 @@ class _ProfilePageState extends State<ProfilePage> {
       debugPrint("Gagal mengambil live data untuk PDF: $e");
     }
 
-    // Tutup loading dialog
     if (mounted) Navigator.pop(context);
 
     final pdf = pw.Document();
@@ -200,7 +215,6 @@ class _ProfilePageState extends State<ProfilePage> {
         margin: const pw.EdgeInsets.all(35),
         build: (pw.Context context) {
           return [
-            // HEADER TOKO
             pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
@@ -222,7 +236,6 @@ class _ProfilePageState extends State<ProfilePage> {
             pw.Divider(thickness: 1.5, color: const PdfColor.fromInt(0xFF4A5D3F)),
             pw.SizedBox(height: 15),
 
-            // INFO ADMIN & KASIR (AKSES INTEGRASI)
             pw.Text("INFO OTORISASI & AKUN", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
             pw.SizedBox(height: 6),
             pw.Container(
@@ -231,7 +244,7 @@ class _ProfilePageState extends State<ProfilePage> {
               child: pw.Column(
                 children: [
                   _pdfRow("Nama Penanggung Jawab (Admin)", fullName),
-                  _pdfRow("Email Terdaftar", _user?.email ?? "-"),
+                  _pdfRow("Email Terdaftar", userEmail.isNotEmpty ? userEmail : (_user?.email ?? "-")),
                   _pdfRow("Status Otorisasi Dokumen", "ADMINISTRATOR (FULL ACCESS)"),
                   _pdfRow("Cakupan Laporan", "Semua Aktivitas Kasir & Admin "),
                   _pdfRow("Shift Pemantauan", selectedShift),
@@ -241,7 +254,6 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             pw.SizedBox(height: 20),
 
-            // RINGKASAN PENJUALAN & AKTIVITAS
             pw.Text("RINGKASAN EKSEKUTIF PENJUALAN", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
             pw.SizedBox(height: 6),
             pw.Row(
@@ -279,7 +291,6 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             pw.SizedBox(height: 10),
 
-            // STATISTIK SEDERHANA
             pw.Row(
               children: [
                 pw.Expanded(
@@ -315,7 +326,6 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             pw.SizedBox(height: 20),
 
-            // TABEL TRANSAKSI LIVE KASIR & ADMIN
             pw.Text("LOG HISTORI TRANSAKSI TERBARU", style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF4A5D3F))),
             pw.SizedBox(height: 6),
             transactionList.isEmpty
@@ -423,18 +433,16 @@ class _ProfilePageState extends State<ProfilePage> {
 
     setState(() => _isLoading = true);
     try {
-      // Update di tabel profiles Supabase
       await Supabase.instance.client
           .from('profiles')
           .update({'role': normalizedRole})
           .eq('id', _user!.id);
 
-      // Sinkronkan juga ke User Metadata lokal agar aman
       await Supabase.instance.client.auth.updateUser(
         UserAttributes(data: {'role': normalizedRole}),
       );
 
-      await _loadUserData(); // Reload ulang dari DB
+      await _loadUserData(); 
       
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -460,16 +468,12 @@ class _ProfilePageState extends State<ProfilePage> {
         final fileName = '$userId/avatar_${DateTime.now().millisecondsSinceEpoch}.jpg';
         final file = File(pickedFile.path);
 
-        // Upload ke storage bucket 'avatars'
         await Supabase.instance.client.storage.from('avatars').upload(fileName, file, fileOptions: const FileOptions(upsert: true));
         
-        // Dapatkan Public URL resmi
         final String publicUrl = Supabase.instance.client.storage.from('avatars').getPublicUrl(fileName);
         
-        // 1. Simpan ke Tabel Database 'profiles'
         await Supabase.instance.client.from('profiles').update({'avatar_url': publicUrl}).eq('id', userId);
 
-        // 2. Simpan ke User Metadata Auth
         await Supabase.instance.client.auth.updateUser(UserAttributes(data: {'avatar_url': publicUrl}));
         
         await _loadUserData(); 
@@ -508,7 +512,6 @@ class _ProfilePageState extends State<ProfilePage> {
             _buildPremiumHeader(),
             const SizedBox(height: 25),
             
-            // DOKUMEN & LAPORAN SECTION: Hanya di-render jika role == admin (Hilang total jika kasir)
             if (isAdmin) ...[
               _buildSectionTitle(t("DOKUMEN & LAPORAN", "DOCUMENTS & REPORTS")),
               _profileTile(Icons.picture_as_pdf_rounded, t("Unduh Laporan Kerja", "Download Work Report"), t("File PDF Branded Selasar", "Selasar Branded PDF"), _downloadReport),
@@ -522,17 +525,14 @@ class _ProfilePageState extends State<ProfilePage> {
               t("Jabatan", "Role"), 
               selectedRole == 'admin' ? t("Admin", "Admin") : t("Kasir", "Cashier"), 
               () {
-                // Proteksi navigasi manual: Menu jabatan terkunci total untuk Kasir
                 if (!isAdmin) {
                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                     content: Text(t("Jabatan Anda dikunci oleh Sistem Database!", "Your role is locked by the Database System!")),
                     backgroundColor: Colors.orange.shade800,
                   ));
                 } else {
-                  // Jika Admin, tampilkan sheet penggantian pilihan role
                   _showPicker(t("Jabatan", "Role"), [t("Kasir", "Cashier"), t("Admin", "Admin")], (val) {
-                    // Konversi kembali dari label bahasa lokal/global ke real value database
-                    String targetRole = (val == "Admin" || val == "Admin") ? "admin" : "kasir";
+                    String targetRole = (val == "Admin" || val == "admin") ? "admin" : "kasir";
                     _updateRoleInDatabase(targetRole);
                   });
                 }
@@ -547,10 +547,9 @@ class _ProfilePageState extends State<ProfilePage> {
             ),
             
             const SizedBox(height: 25),
-            _buildSectionTitle(t("KEAMANAN & BAHASA", "SECURITY & LANGUAGE")),
+            _buildSectionTitle(t("KEAMANAN ", "SECURITY & LANGUAGE")),
             _profileTile(Icons.lock_person_outlined, t("Ganti Password", "Change Password"), t("Amankan akun", "Secure your account"), _showPasswordDialog),
-            _profileTile(Icons.language_rounded, t("Bahasa", "Language"), isEnglish ? "English" : "Indonesia", () => setState(() => isEnglish = !isEnglish)),
-            
+              
             const SizedBox(height: 40),
             _buildLogoutButton(),
             const SizedBox(height: 50),
@@ -607,7 +606,7 @@ class _ProfilePageState extends State<ProfilePage> {
           const SizedBox(height: 20),
           Text(fullName, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, color: Color(0xFF2D3329))),
           const SizedBox(height: 4),
-          Text(_user?.email ?? "", style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
+          Text(userEmail.isNotEmpty ? userEmail : (_user?.email ?? ""), style: const TextStyle(color: Colors.grey, fontWeight: FontWeight.w500)),
         ],
       ),
     );
@@ -689,7 +688,7 @@ class _ProfilePageState extends State<ProfilePage> {
             ...options.map((e) => ListTile(
               title: Text(e, style: const TextStyle(fontWeight: FontWeight.w600)),
               onTap: () { onSelect(e); Navigator.pop(context); },
-              trailing: const Icon(Icons.check_circle_outline, color: Color(0xFFA3B18A)),
+              trailing: const Icon(Icons.check_circle_outline, color: Color(0xFF4A5D3F)),
             )),
           ],
         ),
@@ -722,6 +721,7 @@ class _ProfilePageState extends State<ProfilePage> {
     );
   }
   
+  // --- FIXED: MENYEMPURNAKAN BOTTOM SHEET UNTUK PILIHAN FOTO ---
   void _showPhotoOptions() {
     showModalBottomSheet(
       context: context,
@@ -731,17 +731,23 @@ class _ProfilePageState extends State<ProfilePage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(t("Kelola Foto Profil", "Manage Profile Photo"), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
-            const SizedBox(height: 25),
+            Text(t("UBAH FOTO PROFIL", "CHANGE PROFILE PHOTO"), style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: Color(0xFF4A5D3F))),
+            const SizedBox(height: 20),
             ListTile(
-              leading: const CircleAvatar(backgroundColor: Color(0xFFF1F4EE), child: Icon(Icons.camera_alt, color: Color(0xFF4A5D3F))),
-              title: Text(t("Ambil Foto", "Take Photo")),
-              onTap: () { Navigator.pop(context); _handlePhotoAction(ImageSource.camera); },
+              leading: const Icon(Icons.photo_library_rounded, color: Color(0xFF4A5D3F)),
+              title: Text(t("Ambil dari Galeri", "Choose from Gallery"), style: const TextStyle(fontWeight: FontWeight.w600)),
+              onTap: () {
+                Navigator.pop(context);
+                _handlePhotoAction(ImageSource.gallery);
+              },
             ),
             ListTile(
-              leading: const CircleAvatar(backgroundColor: Color(0xFFF1F4EE), child: Icon(Icons.photo_library, color: Color(0xFF4A5D3F))),
-              title: Text(t("Pilih dari Galeri", "Choose from Gallery")),
-              onTap: () { Navigator.pop(context); _handlePhotoAction(ImageSource.gallery); },
+              leading: const Icon(Icons.camera_alt_rounded, color: Color(0xFF4A5D3F)),
+              title: Text(t("Gunakan Kamera", "Take a Photo"), style: const TextStyle(fontWeight: FontWeight.w600)),
+              onTap: () {
+                Navigator.pop(context);
+                _handlePhotoAction(ImageSource.camera);
+              },
             ),
           ],
         ),

@@ -31,6 +31,7 @@ class _StockManagementPageState extends State<StockManagementPage> {
     "Snack"
   ];
 
+  // Pemetaan Asset Gambar berdasarkan NAMA PRODUK ASLI
   final Map<String, String> localAssetImages = {
     "Aceh Gayo V60": "assets/images/acehgayov60.png",
     "Amerikano": "assets/images/americano.jpg",
@@ -54,8 +55,9 @@ class _StockManagementPageState extends State<StockManagementPage> {
     "Burger": "assets/images/burger.jpg",
   };
 
-  // State pengaman internal melacak ID transaksi agar tidak memotong stok berkali-kali
   final Set<String> _processedLocalOrderIds = {};
+  bool _isSyncing = false;
+  final List<Future<void> Function()> _syncQueue = [];
 
   @override
   void initState() {
@@ -64,14 +66,51 @@ class _StockManagementPageState extends State<StockManagementPage> {
       if (mounted) {
         final provider = context.read<PromoProvider>();
         provider.listenToStockChanges();
+        _normalizeAndInjectInitialStocks();
         _syncStockFromLocalHistory();
       }
     });
   }
 
-  // =========================================================================
-  // CORE ENGINE SINKRONISASI: POTONG LOKAL INSTANT + BACKGROUND UPDATE DB
-  // =========================================================================
+  void _normalizeAndInjectInitialStocks() {
+    final promoProvider = context.read<PromoProvider>();
+    for (int i = 0; i < promoProvider.allMenusWithStock.length; i++) {
+      var item = promoProvider.allMenusWithStock[i];
+      int currentStock = item['stock'] ?? -1;
+      
+      if (currentStock < 0 || currentStock == 9999) {
+        String id = item['id'].toString();
+        String name = item['name'].toString();
+        
+        int seedStock = (name.length * (i + 1)) % 21; 
+        
+        if (name == "Aceh Gayo V60" || name == "Donat") seedStock = 0; 
+        if (name == "Amerikano" || name == "Roti Bakar") seedStock = 5;
+
+        promoProvider.updateStock(id, seedStock);
+      }
+    }
+  }
+
+  void _enqueueOperation(Future<void> Function() operation) {
+    _syncQueue.add(operation);
+    _processQueue();
+  }
+
+  Future<void> _processQueue() async {
+    if (_isSyncing || _syncQueue.isEmpty) return;
+    _isSyncing = true;
+    while (_syncQueue.isNotEmpty) {
+      final operation = _syncQueue.removeAt(0);
+      try {
+        await operation();
+      } catch (e) {
+        debugPrint("Error executing queued stock operation: $e");
+      }
+    }
+    _isSyncing = false;
+  }
+
   void _syncStockFromLocalHistory() {
     final historyManager = context.read<OrderHistoryManager>();
     final promoProvider = context.read<PromoProvider>();
@@ -94,23 +133,20 @@ class _StockManagementPageState extends State<StockManagementPage> {
 
             if (existingMenu.isNotEmpty) {
               final String id = existingMenu['id'].toString();
-              int currentStock = ((existingMenu['stock'] ?? 20) as num).toInt();
-              if (currentStock == 9999 || currentStock < 0) currentStock = 20;
+              int currentStock = ((existingMenu['stock'] ?? 10) as num).toInt();
+              if (currentStock == 9999) currentStock = 10;
 
-              int updatedStock = (currentStock - qtyBought).clamp(0, 99999);
-              
-              // 1. UPDATE STATE MANAGEMENT LOKAL SECARA INSTANT
+              int updatedStock = currentStock - qtyBought;
+              if (updatedStock < 0) updatedStock = 0;
+
               promoProvider.updateStock(id, updatedStock);
 
-              // 2. UPDATE REMOTE DATABASE (Supabase) DI BACKGROUND TANPA PERLU AWAIT DI BUILD
-              unawaited(
-                supabase
+              _enqueueOperation(() async {
+                await supabase
                     .from('menus')
                     .update({'stock': updatedStock})
-                    .eq('id', id)
-                    .then((_) => debugPrint("Stok $menuName berhasil dipotong di Supabase"))
-                    .catchError((e) => debugPrint("Gagal update stok ke Supabase: $e"))
-              );
+                    .eq('id', id);
+              });
             }
           }
         }
@@ -127,32 +163,33 @@ class _StockManagementPageState extends State<StockManagementPage> {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           title: Text(
-            "Stok $name Habis!",
+            "Isi Kembali Stok $name?",
             style: const TextStyle(fontWeight: FontWeight.bold, color: primaryGreen),
           ),
           content: const Text(
-            "Apakah Anda ingin mengisi kembali (Restock) produk ini ke batas default (20 item) sekarang?",
+            "Produk ini kehabisan stok. Apakah Anda ingin melakukan restock instan sebanyak 20 item?",
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(dialogContext),
-              child: const Text("Belum Restock", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
+              child: const Text("Batal", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold)),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: primaryGreen,
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
               ),
-              onPressed: () async {
-                try {
-                  await supabase.from('menus').update({'stock': 20}).eq('id', id);
-                } catch (_) {}
+              onPressed: () {
                 if (mounted) {
                   context.read<PromoProvider>().updateStock(id, 20);
                 }
+                _enqueueOperation(() async {
+                  await supabase.from('menus').update({'stock': 20}).eq('id', id);
+                });
                 Navigator.pop(dialogContext);
+                setState(() {});
               },
-              child: const Text("Ya, Sudah Restock (20)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              child: const Text("Ya, Restock (20)", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
           ],
         );
@@ -162,10 +199,7 @@ class _StockManagementPageState extends State<StockManagementPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Daftarkan listener utama untuk memantau simulasi pesanan otomatis masuk
     context.watch<OrderHistoryManager>();
-    
-    // Jalankan sinkronisasi pemotongan stok otomatis ke database
     _syncStockFromLocalHistory();
 
     final promoProvider = context.watch<PromoProvider>();
@@ -290,13 +324,15 @@ class _StockManagementPageState extends State<StockManagementPage> {
   }
 
   Widget _buildStockCard(Map<String, dynamic> item) {
-    int currentStock = item['stock'] ?? 0;
-    if (currentStock == 9999 || currentStock < 0) currentStock = 20;
-
-    bool isAvailable = currentStock > 0;
     String id = item['id'].toString();
     String name = item['name'] ?? '';
     String itemImage = item['image']?.toString() ?? '';
+
+    int currentStock = item['stock'] ?? 0;
+    if (currentStock == 9999) currentStock = 12;
+    if (currentStock < 0) currentStock = 0;
+
+    bool isAvailable = currentStock > 0;
 
     String finalImagePath = itemImage;
     bool isNetworkImage = finalImagePath.startsWith('http') || finalImagePath.startsWith('https');
@@ -313,7 +349,7 @@ class _StockManagementPageState extends State<StockManagementPage> {
     Color statusColor = Colors.red;
 
     if (currentStock > 5) {
-      stockStatusLabel = "SISA: $currentStock";
+      stockStatusLabel = "STOK TERSEDIA: $currentStock";
       statusColor = Colors.green;
     } else if (currentStock >= 1 && currentStock <= 5) {
       stockStatusLabel = "STOK MENIPIS: $currentStock";
@@ -349,12 +385,19 @@ class _StockManagementPageState extends State<StockManagementPage> {
               children: [
                 Text(name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13), maxLines: 2, overflow: TextOverflow.ellipsis),
                 const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
-                  child: Text(
-                    stockStatusLabel,
-                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: statusColor, letterSpacing: 0.3),
+                GestureDetector(
+                  onTap: currentStock == 0 ? () => _showRestockDialog(context, id, name) : null,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: currentStock == 0 ? Colors.red.shade100 : statusColor.withOpacity(0.1), 
+                      borderRadius: BorderRadius.circular(6),
+                      border: currentStock == 0 ? Border.all(color: Colors.red.shade400, width: 0.5) : null
+                    ),
+                    child: Text(
+                      currentStock == 0 ? "STOK HABIS (KLIK RESTOCK)" : stockStatusLabel,
+                      style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: currentStock == 0 ? Colors.red.shade800 : statusColor, letterSpacing: 0.3),
+                    ),
                   ),
                 ),
               ],
@@ -366,20 +409,20 @@ class _StockManagementPageState extends State<StockManagementPage> {
               IconButton(
                 constraints: const BoxConstraints(),
                 padding: const EdgeInsets.all(4),
-                onPressed: currentStock > 0
-                    ? () async {
-                        int updatedStock = currentStock - 1;
-                        try {
-                          await supabase.from('menus').update({'stock': updatedStock}).eq('id', id);
-                        } catch (_) {}
-                        if (mounted) {
-                          context.read<PromoProvider>().updateStock(id, updatedStock);
-                        }
-                        if (updatedStock == 0 && mounted) {
-                          _showRestockDialog(context, id, name);
-                        }
-                      }
-                    : null,
+                onPressed: () {
+                  int updatedStock = currentStock - 1;
+                  if (updatedStock < 0) updatedStock = 0;
+
+                  context.read<PromoProvider>().updateStock(id, updatedStock);
+                  _enqueueOperation(() async {
+                    await supabase.from('menus').update({'stock': updatedStock}).eq('id', id);
+                  });
+                  setState(() {});
+
+                  if (updatedStock == 0) {
+                    _showRestockDialog(context, id, name);
+                  }
+                },
                 icon: const Icon(Icons.remove_circle_outline, color: primaryGreen, size: 22),
               ),
               Padding(
@@ -389,14 +432,15 @@ class _StockManagementPageState extends State<StockManagementPage> {
               IconButton(
                 constraints: const BoxConstraints(),
                 padding: const EdgeInsets.all(4),
-                onPressed: () async {
+                onPressed: () {
                   int updatedStock = currentStock + 1;
-                  try {
+                  if (updatedStock > 20) updatedStock = 20;
+
+                  context.read<PromoProvider>().updateStock(id, updatedStock);
+                  _enqueueOperation(() async {
                     await supabase.from('menus').update({'stock': updatedStock}).eq('id', id);
-                  } catch (_) {}
-                  if (mounted) {
-                    context.read<PromoProvider>().updateStock(id, updatedStock);
-                  }
+                  });
+                  setState(() {});
                 },
                 icon: const Icon(Icons.add_circle, color: primaryGreen, size: 22),
               ),
@@ -408,16 +452,15 @@ class _StockManagementPageState extends State<StockManagementPage> {
               value: isAvailable,
               activeColor: primaryGreen,
               materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              onChanged: (val) async {
-                int updatedStock = val ? 20 : 0;
-                try {
-                  await supabase.from('menus').update({'stock': updatedStock}).eq('id', id);
-                } catch (_) {}
-                if (mounted) {
-                  context.read<PromoProvider>().updateStock(id, updatedStock);
-                }
-                if (!val && mounted) {
+              onChanged: (val) {
+                if (val) {
                   _showRestockDialog(context, id, name);
+                } else {
+                  context.read<PromoProvider>().updateStock(id, 0);
+                  _enqueueOperation(() async {
+                    await supabase.from('menus').update({'stock': 0}).eq('id', id);
+                  });
+                  setState(() {});
                 }
               },
             ),

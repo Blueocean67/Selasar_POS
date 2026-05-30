@@ -342,6 +342,7 @@ class _OrderSummaryPageState extends State<OrderSummaryPage> {
     final String customerName = _activeOrderArgs['customer_name'] ?? "Pelanggan POS";
     final String tableNumber = _activeOrderArgs['table_number'] ?? "00";
     final List<dynamic> items = _activeOrderArgs['items'] ?? []; 
+    final String cashierName = _activeOrderArgs['cashier_name'] ?? "Staff";
     
     // Auto-recalculation data finansial
     final double subtotal = _getComputedSubtotal();
@@ -392,6 +393,9 @@ class _OrderSummaryPageState extends State<OrderSummaryPage> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      const Text("KASIR", style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
+                      Text(cashierName.toUpperCase(), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: olive)),
+                      const SizedBox(height: 10),
                       const Text("NAMA PEMESAN", style: TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
                       const SizedBox(height: 4),
                       Text(customerName.toUpperCase(), style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: textDark)),

@@ -107,20 +107,26 @@ class _DashboardPageContentState
     }
   }
 
+  // --- AMBIL PROFIL REALTIME DARI DATABASE (SINKRON DENGAN PROFILE_PAGE) ---
   Future<void> loadProfile() async {
     try {
       final user = supabase.auth.currentUser;
       if (user != null) {
+        // Mengambil data real-time langsung dari tabel 'profiles' penyesuaian skema baru
         final res = await supabase
             .from('profiles')
-            .select()
+            .select('role, avatar_url')
             .eq('id', user.id)
-            .maybeSingle();
+            .maybeSingle()
+            .timeout(const Duration(seconds: 3));
 
         if (mounted) {
           setState(() {
+            // Priority utama dari data database riil, fallback menggunakan userMetadata
             profileImage = res?['avatar_url'] ?? user.userMetadata?['avatar_url'];
-            userRole = (res?['role'] ?? user.userMetadata?['role'] ?? 'KASIR').toString().toUpperCase();
+            
+            String dbRole = (res?['role'] ?? user.userMetadata?['role'] ?? 'kasir').toString().trim().toUpperCase();
+            userRole = dbRole;
           });
         }
       }
@@ -319,7 +325,7 @@ class _DashboardPageContentState
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // ===== HEADER =====
+                      // ===== HEADER WITH TEXT MODIFICATIONS =====
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -335,14 +341,26 @@ class _DashboardPageContentState
                                   letterSpacing: 0.5,
                                 ),
                               ),
-                              const SizedBox(height: 6),
+                              const SizedBox(height: 8),
+                              // Pemisahan tulisan Dashboard dan Ringkasan dengan modifikasi jarak & ukuran teks
                               const Text(
-                                "Dashboard\nRingkasan",
+                                "Dashboard",
                                 style: TextStyle(
                                   fontSize: 32,
                                   fontWeight: FontWeight.w900,
                                   color: Color(0xFF32341E),
-                                  height: 1.1,
+                                  height: 1.0,
+                                  letterSpacing: -0.5,
+                                ),
+                              ),
+                              const SizedBox(height: 4), // Jarak pemisah antar teks
+                              const Text(
+                                "Ringkasan",
+                                style: TextStyle(
+                                  fontSize: 26, // Ukuran teks diperkecil sedikit dari sebelumnya (32 -> 26)
+                                  fontWeight: FontWeight.w800,
+                                  color: Color(0xFF5D623A),
+                                  height: 1.0,
                                   letterSpacing: -0.5,
                                 ),
                               ),
@@ -537,9 +555,9 @@ class _DashboardPageContentState
         ),
         _quickAction(
           Icons.inventory_2_outlined,
-          "Stok Produk",
-          "Kelola stok",
-          () => Navigator.pushNamed(context, '/stock_manage'),
+          "Keuangan",
+          "Buka Menu Keuangan",
+          () => Navigator.pushNamed(context, '/financesummary'),
         ),
         _quickAction(
           Icons.discount_outlined,

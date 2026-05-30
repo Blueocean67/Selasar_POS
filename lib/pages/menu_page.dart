@@ -14,6 +14,7 @@ class MenuPage extends StatefulWidget {
 
 class _MenuPageState extends State<MenuPage> {
   static const Color olive = Color(0xFF4A5D3F); 
+  static const Color oliveLight = Color(0xFFB1B67C); 
   static const Color bg = Color(0xFFF8F9F2);    
 
   String selectedCategory = "Kopi";
@@ -47,7 +48,7 @@ class _MenuPageState extends State<MenuPage> {
     ],
     "Snack": [
       {"id": "d1", "name": "Roti Bakar", "price": 20000, "image": "assets/images/RotiBakar.jpg", "category": "Snack"},
-      {"id": "d2", "name": "Donat", "price": 15000, "price": 15000, "image": "assets/images/donat.jpg", "category": "Snack"},
+      {"id": "d2", "name": "Donat", "price": 15000, "image": "assets/images/donat.jpg", "category": "Snack"},
       {"id": "d3", "name": "Cheesecake", "price": 27000, "image": "assets/images/cheesecake.jpg", "category": "Snack"},
       {"id": "d4", "name": "Cookies", "price": 15000, "image": "assets/images/cookies.jpg", "category": "Snack"},
       {"id": "d5", "name": "Burger", "price": 25000, "image": "assets/images/burger.jpg", "category": "Snack"},
@@ -129,6 +130,14 @@ class _MenuPageState extends State<MenuPage> {
     });
   }
 
+  void _clearItemFromCart(String id) {
+    setState(() {
+      cart.remove(id);
+      cartItemsData.remove(id);
+      itemNotes.remove(id);
+    });
+  }
+
   int _calculateSubtotal() {
     int total = 0;
     cart.forEach((id, qty) {
@@ -144,7 +153,6 @@ class _MenuPageState extends State<MenuPage> {
     final promoProvider = context.watch<PromoProvider>();
     
     // ===== SINKRONISASI REALTIME ENGINE =====
-    // Menguping OrderHistoryManager lokal agar ketika simulasi/payment memotong stok, halaman menu ikut merefresh
     context.watch<OrderHistoryManager>(); 
 
     final user = Supabase.instance.client.auth.currentUser;
@@ -153,10 +161,12 @@ class _MenuPageState extends State<MenuPage> {
     final Object? args = ModalRoute.of(context)?.settings.arguments;
     String namaPemesan = "PELANGGAN";
     String nomorMeja = "--";
+    String namaKasir = "STAFF";
 
     if (args is Map) {
       namaPemesan = args['customer_name']?.toString() ?? args['name']?.toString() ?? "PELANGGAN";
       nomorMeja = args['table_number']?.toString() ?? args['table']?.toString() ?? "--";
+      namaKasir = args['cashier_name']?.toString() ?? "STAFF";
     }
 
     int subtotal = _calculateSubtotal();
@@ -199,6 +209,7 @@ class _MenuPageState extends State<MenuPage> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text("Selasar Ruang", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        Text("KASIR : ${namaKasir.toUpperCase()}", style: const TextStyle(color: olive, fontSize: 10, fontWeight: FontWeight.bold)),
                         Text("PEMESAN : ${namaPemesan.toUpperCase()}", 
                           style: const TextStyle(color: Colors.grey, fontSize: 10, fontWeight: FontWeight.bold)),
                       ],
@@ -260,25 +271,24 @@ class _MenuPageState extends State<MenuPage> {
                     delegate: SliverChildBuilderDelegate(
                       (context, index) {
                         final localItem = displayMenus[index];
+                        final itemId = localItem['id'].toString();
                         
-                        // PEMENCARAN STOK YANG AKURAT SINKRON: Mencari berdasarkan kecocokan ID item menu
                         final providerItem = promoProvider.allMenusWithStock.firstWhere(
-                          (e) => e['id'].toString() == localItem['id'].toString(),
+                          (e) => e['id'].toString() == itemId,
                           orElse: () => {},
                         );
 
                         int liveStock = providerItem['stock'] ?? localItem['stock'] ?? 20;
                         if (liveStock == 9999 || liveStock < 0) liveStock = 20; 
-                        bool isAvailable = liveStock > 0;
 
                         return _MenuCardFullWidth(
                           item: localItem,
-                          qty: cart[localItem['id'].toString()] ?? 0,
-                          currentNote: itemNotes[localItem['id'].toString()],
-                          isAvailable: isAvailable,
+                          qty: cart[itemId] ?? 0,
+                          currentNote: itemNotes[itemId],
                           liveStock: liveStock,
                           onAdd: (note) => _updateCart(localItem, 1, note: note, maxStock: liveStock),
                           onRemove: () => _updateCart(localItem, -1),
+                          onClearItem: () => _clearItemFromCart(itemId),
                         );
                       },
                       childCount: displayMenus.length,
@@ -302,6 +312,7 @@ class _MenuPageState extends State<MenuPage> {
             itemNotes: itemNotes,
             customerName: namaPemesan,
             tableNumber: nomorMeja,
+            cashierName: namaKasir,
             currentCartList: currentCartItems,
           ) 
         : null,
@@ -358,7 +369,7 @@ class _MenuPageState extends State<MenuPage> {
                   width: 80,
                   margin: const EdgeInsets.only(right: 15),
                   decoration: BoxDecoration(
-                    color: isSelected ? olive : Colors.white,
+                    color: isSelected ? oliveLight : Colors.white,
                     borderRadius: BorderRadius.circular(15),
                     boxShadow: [if(!isSelected) BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10)],
                   ),
@@ -383,27 +394,48 @@ class _MenuPageState extends State<MenuPage> {
   }
 }
 
-class _MenuCardFullWidth extends StatelessWidget {
+class _MenuCardFullWidth extends StatefulWidget {
   final Map<String, dynamic> item;
   final int qty;
   final String? currentNote;
-  final bool isAvailable;
   final int liveStock;
   final Function(String?) onAdd;
   final VoidCallback onRemove;
+  final VoidCallback onClearItem;
 
   const _MenuCardFullWidth({
     required this.item, 
     required this.qty, 
     this.currentNote, 
-    required this.isAvailable,
     required this.liveStock,
     required this.onAdd, 
     required this.onRemove,
+    required this.onClearItem,
   });
 
+  @override
+  State<_MenuCardFullWidth> createState() => _MenuCardFullWidthState();
+}
+
+class _MenuCardFullWidthState extends State<_MenuCardFullWidth> {
+  late bool _localAvailable;
+
+  @override
+  void initState() {
+    super.initState();
+    _localAvailable = widget.liveStock > 0;
+  }
+
+  @override
+  void didUpdateWidget(_MenuCardFullWidth oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.liveStock != widget.liveStock) {
+      _localAvailable = widget.liveStock > 0;
+    }
+  }
+
   void _showVariantDialog(BuildContext context) {
-    String category = item['category'] ?? '';
+    String category = widget.item['category'] ?? '';
     List<String> options = [];
     String title = "";
 
@@ -415,7 +447,7 @@ class _MenuCardFullWidth extends StatelessWidget {
       options = ["Biasa", "Sedang", "Pedas"];
     }
 
-    if (options.isEmpty) { onAdd(null); return; }
+    if (options.isEmpty) { widget.onAdd(null); return; }
 
     showModalBottomSheet(
       context: context,
@@ -429,7 +461,7 @@ class _MenuCardFullWidth extends StatelessWidget {
             const SizedBox(height: 15),
             ...options.map((opt) => ListTile(
               title: Text(opt),
-              onTap: () { onAdd(opt); Navigator.pop(context); },
+              onTap: () { widget.onAdd(opt); Navigator.pop(context); },
             )),
           ],
         ),
@@ -440,7 +472,8 @@ class _MenuCardFullWidth extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     const olive = Color(0xFF4A5D3F);
-    bool isNetworkImage = item['isFromDb'] == true && (item['image'].toString().startsWith('http') || item['image'].toString().startsWith('https'));
+    bool isNetworkImage = widget.item['isFromDb'] == true && (widget.item['image'].toString().startsWith('http') || widget.item['image'].toString().startsWith('https'));
+    bool finalAvailability = _localAvailable && (widget.liveStock > 0);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 20),
@@ -455,8 +488,8 @@ class _MenuCardFullWidth extends StatelessWidget {
           ClipRRect(
             borderRadius: const BorderRadius.vertical(top: Radius.circular(25)),
             child: isNetworkImage 
-              ? Image.network(item['image'], height: 180, width: double.infinity, fit: BoxFit.cover, errorBuilder: (c,e,s) => _errorImg())
-              : Image.asset(item['image'], height: 180, width: double.infinity, fit: BoxFit.cover, errorBuilder: (c,e,s) => _errorImg()),
+              ? Image.network(widget.item['image'], height: 180, width: double.infinity, fit: BoxFit.cover, errorBuilder: (c,e,s) => _errorImg())
+              : Image.asset(widget.item['image'], height: 180, width: double.infinity, fit: BoxFit.cover, errorBuilder: (c,e,s) => _errorImg()),
           ),
           Padding(
             padding: const EdgeInsets.all(20),
@@ -466,27 +499,57 @@ class _MenuCardFullWidth extends StatelessWidget {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Expanded(child: Text(item['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17), overflow: TextOverflow.ellipsis)),
-                    Text("Rp ${item['price']}", style: const TextStyle(fontWeight: FontWeight.bold, color: olive, fontSize: 16)),
+                    Expanded(child: Text(widget.item['name'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17), overflow: TextOverflow.ellipsis)),
+                    Text("Rp ${widget.item['price']}", style: const TextStyle(fontWeight: FontWeight.bold, color: olive, fontSize: 16)),
                   ],
                 ),
-                if (item['desc'] != null && item['desc'].toString().isNotEmpty) ...[
+                if (widget.item['desc'] != null && widget.item['desc'].toString().isNotEmpty) ...[
                   const SizedBox(height: 4),
-                  Text(item['desc'], style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                  Text(widget.item['desc'], style: const TextStyle(color: Colors.grey, fontSize: 12)),
                 ],
-                if (currentNote != null) ...[
+                if (widget.currentNote != null) ...[
                   const SizedBox(height: 6),
-                  Text("Notes: $currentNote", style: const TextStyle(color: Color(0xFFD4A373), fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text("Notes: ${widget.currentNote}", style: const TextStyle(color: Color(0xFFD4A373), fontSize: 12, fontWeight: FontWeight.bold)),
                 ],
-                const SizedBox(height: 4),
-                Text(
-                  isAvailable ? "Stok tersedia: $liveStock" : "Stok Habis", 
-                  style: TextStyle(color: isAvailable ? Colors.green : Colors.red, fontSize: 11, fontWeight: FontWeight.bold),
+                const SizedBox(height: 12),
+                
+                Row(
+                  children: [
+                    GestureDetector(
+                      onTap: () {
+                        if (widget.liveStock > 0) {
+                          setState(() => _localAvailable = true);
+                        }
+                      },
+                      child: _buildMiniStockBadge(
+                        label: "Tersedia",
+                        isActive: finalAvailability,
+                        activeColor: Colors.green,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _localAvailable = false;
+                        });
+                        if (widget.qty > 0) {
+                          widget.onClearItem();
+                        }
+                      },
+                      child: _buildMiniStockBadge(
+                        label: "Habis",
+                        isActive: !finalAvailability,
+                        activeColor: Colors.red,
+                      ),
+                    ),
+                  ],
                 ),
+                
                 const SizedBox(height: 20),
-                qty == 0
-                    ? SizedBox(width: double.infinity, child: _addButton(context))
-                    : _qtyController(),
+                (!finalAvailability || widget.qty == 0)
+                    ? SizedBox(width: double.infinity, child: _addButton(context, finalAvailability))
+                    : _qtyController(finalAvailability),
               ],
             ),
           )
@@ -495,30 +558,58 @@ class _MenuCardFullWidth extends StatelessWidget {
     );
   }
 
+  Widget _buildMiniStockBadge({required String label, required bool isActive, required Color activeColor}) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: isActive ? activeColor.withOpacity(0.12) : Colors.grey[100],
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isActive ? activeColor : Colors.grey.shade300,
+          width: 1,
+        ),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.bold,
+          color: isActive ? activeColor : Colors.grey[400],
+        ),
+      ),
+    );
+  }
+
   Widget _errorImg() => Container(height: 180, color: Colors.grey[100], width: double.infinity, child: const Icon(Icons.image, color: Colors.grey));
   
-  Widget _addButton(BuildContext context) => ElevatedButton(
-    onPressed: isAvailable ? () => _showVariantDialog(context) : null,
+  Widget _addButton(BuildContext context, bool isAvail) => ElevatedButton(
+    onPressed: isAvail ? () => _showVariantDialog(context) : null,
     style: ElevatedButton.styleFrom(
-      backgroundColor: isAvailable ? const Color(0xFFF8F9F2) : Colors.grey[200], 
-      foregroundColor: isAvailable ? const Color(0xFF4A5D3F) : Colors.grey[400],
+      backgroundColor: isAvail ? const Color(0xFFF8F9F2) : Colors.grey[300], 
+      foregroundColor: isAvail ? const Color(0xFF4A5D3F) : Colors.grey[500],
+      disabledBackgroundColor: Colors.grey[300],
+      disabledForegroundColor: Colors.grey[400],
       elevation: 0, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
       padding: const EdgeInsets.symmetric(vertical: 14),
     ),
-    child: Text(isAvailable ? "+ Tambah" : "Habis", style: const TextStyle(fontWeight: FontWeight.bold)),
+    child: Text(isAvail ? "+ Tambah" : "Stok Habis", style: const TextStyle(fontWeight: FontWeight.bold)),
   );
 
-  Widget _qtyController() => Row(
+  Widget _qtyController(bool isAvail) => Row(
     mainAxisAlignment: MainAxisAlignment.center,
     children: [
-      IconButton(onPressed: onRemove, icon: const Icon(Icons.remove_circle_outline, color: Color(0xFF4A5D3F), size: 28)),
+      IconButton(onPressed: widget.onRemove, icon: const Icon(Icons.remove_circle_outline, color: Color(0xFF4A5D3F), size: 28)),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 25),
-        child: Text("$qty", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+        child: Text("${widget.qty}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
       ),
       IconButton(
-        onPressed: qty < liveStock ? () => onAdd(null) : null, 
-        icon: Icon(Icons.add_circle, color: qty < liveStock ? const Color(0xFF4A5D3F) : Colors.grey, size: 28),
+        onPressed: (isAvail && widget.qty < widget.liveStock) ? () => widget.onAdd(null) : null, 
+        icon: Icon(
+          Icons.add_circle, 
+          color: (isAvail && widget.qty < widget.liveStock) ? const Color(0xFF4A5D3F) : Colors.grey[300], 
+          size: 28
+        ),
       ),
     ],
   );
@@ -535,6 +626,7 @@ class _BottomCartPreview extends StatefulWidget {
   final Map<String, String> itemNotes;
   final String customerName;
   final String tableNumber;
+  final String cashierName;
   final List<Map<String, dynamic>> currentCartList; 
 
   const _BottomCartPreview({
@@ -547,6 +639,7 @@ class _BottomCartPreview extends StatefulWidget {
     required this.itemNotes,
     required this.customerName,
     required this.tableNumber,
+    required this.cashierName,
     required this.currentCartList,
   });
 
@@ -633,6 +726,7 @@ class _BottomCartPreviewState extends State<_BottomCartPreview> {
                 arguments: {
                   'customer_name': widget.customerName,
                   'table_number': widget.tableNumber,
+                  'cashier_name': widget.cashierName,
                   'subtotal': widget.subtotal.toDouble(),
                   'discount': widget.discount.toDouble(),
                   'total_price': widget.totalPrice.toDouble(),

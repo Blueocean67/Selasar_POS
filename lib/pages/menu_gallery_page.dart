@@ -2,12 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// --- CONFIGURATION TEMA WARNA ---
+// --- CONFIGURATION TEMA WARNA (HIJAU AGAK MUDA & SEGAR) ---
 class GalleryTheme {
-  // Menggunakan warna tua utama sesuai request (0xFFB1B67C)
-  static const Color primary = Color(0xFFB1B67C);
+  static const Color primary = Color(0xFFC2C794); 
+  static const Color priceColor = Color(0xFF5A734E); 
   static const Color background = Color(0xFFFDFDF9);
   static const Color textSecondary = Color(0xFF8B8F80);
+  static const Color customGreen = Color(0xFFB1B67C); 
 }
 
 class MenuGalleryPage extends StatefulWidget {
@@ -22,17 +23,16 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
   String _selectedCategory = "Semua";
   final List<String> _categories = ["Semua", "Kopi", "Non-Kopi", "Snack", "Food"];
   
-  // StreamController untuk menyatukan data lokal asset dan data realtime Supabase
   final StreamController<List<Map<String, dynamic>>> _combinedStreamController = StreamController<List<Map<String, dynamic>>>.broadcast();
   StreamSubscription<List<Map<String, dynamic>>>? _supabaseSubscription;
 
-  // Data Lokal Asset (Disamakan persis dengan MenuPage)
+  // Data Lokal Asset Dasar
   final Map<String, List<Map<String, dynamic>>> assetMenuData = {
     "Kopi": [
       {"id": "a1", "name": "Aceh Gayo V60", "price": 32000, "image": "assets/images/acehgayov60.png", "category": "Kopi", "desc": "Single Origin Aceh Gayo"},
-      {"id": "a2", "name": "Amerikano", "price": 20000, "image": "assets/images/americano.jpg", "category": "Kopi", "isBestSeller": true},
+      {"id": "a2", "name": "Amerikano", "price": 20000, "image": "assets/images/americano.jpg", "category": "Kopi"},
       {"id": "a3", "name": "Signature Selasar Latte", "price": 28000, "image": "assets/images/Caramellatte.jpg", "category": "Kopi"},
-      {"id": "a4", "name": "Kopi Gula Aren", "price": 25000, "image": "assets/images/kopigulaaren.webp", "category": "Kopi", "isBestSeller": true},
+      {"id": "a4", "name": "Kopi Gula Aren", "price": 25000, "image": "assets/images/kopigulaaren.webp", "category": "Kopi"},
     ],
     "Non-Kopi": [
       {"id": "b1", "name": "Matcha Latte", "price": 28000, "image": "assets/images/matchalatte.webp", "category": "Non-Kopi", "desc": "Uji Matcha Grade A"},
@@ -43,7 +43,7 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
     ],
     "Food": [
       {"id": "c1", "name": "Mie Bangladesh", "price": 25000, "image": "assets/images/Miebangladesh.jpg", "category": "Food"},
-      {"id": "c2", "name": "Nasi Goreng", "price": 30000, "image": "assets/images/nasigoreng.jpg", "category": "Food", "isBestSeller": true},
+      {"id": "c2", "name": "Nasi Goreng", "price": 30000, "image": "assets/images/nasigoreng.jpg", "category": "Food"},
       {"id": "c3", "name": "Ayam Pop", "price": 35000, "image": "assets/images/ayampop.webp", "category": "Food"},
       {"id": "c4", "name": "Ayam Sambal Geprek", "price": 20000, "image": "assets/images/ayamsambalgeprek.jpg", "category": "Food"},
       {"id": "c5", "name": "Nasi Beef Teriyaki", "price": 35000, "image": "assets/images/nasibeefteriyaki.jpg", "category": "Food"},
@@ -58,14 +58,31 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
     ],
   };
 
+  // --- KAMPUS NORMALISASI BAHASA: Mengamankan data masuk dari Supabase ---
+  String _mapCategoryToLocal(String dbCategory) {
+    String clean = dbCategory.trim().toLowerCase();
+    if (clean == 'coffee' || clean == 'kopi') return 'Kopi';
+    if (clean == 'non-coffee' || clean == 'non kopi' || clean == 'non-kopi') return 'Non-Kopi';
+    if (clean == 'snack' || clean == 'makanan ringan') return 'Snack';
+    if (clean == 'food' || clean == 'makanan berat' || clean == 'makanan') return 'Food';
+    return 'Kopi'; 
+  }
+
+  // PERBAIKAN: Disamakan dengan data lokal agar penapisan data kategori minuman tidak pecah
+  String _mapCategoryToDb(String localCategory) {
+    if (localCategory == 'Kopi') return 'Kopi';
+    if (localCategory == 'Non-Kopi') return 'Non-Kopi';
+    return localCategory; 
+  }
+
   @override
   void initState() {
     super.initState();
     _initRealtimeSupabaseStream();
   }
 
-  // Engine Realtime Terintegrasi Penuh ke Database Tanpa Timer/Simulasi Acak
   void _initRealtimeSupabaseStream() {
+    _supabaseSubscription?.cancel();
     try {
       _supabaseSubscription = Supabase.instance.client
           .from('menus')
@@ -73,99 +90,224 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
           .listen((List<Map<String, dynamic>> dbMenus) {
             if (!mounted) return;
             
-            // Satukan aset lokal dan data terupdate dari Supabase ke dalam satu pipeline stream
             List<Map<String, dynamic>> combinedList = [];
             
-            // Masukkan data asset lokal dasar
             for (var categoryList in assetMenuData.values) {
               for (var assetItem in categoryList) {
                 combinedList.add({
-                  'id': assetItem['id'],
+                  'id': assetItem['id'].toString(),
                   'name': assetItem['name'],
                   'price': assetItem['price'],
                   'category': assetItem['category'],
                   'image': assetItem['image'] ?? '',
                   'desc': assetItem['desc'] ?? '',
-                  'stock': assetItem['stock'] ?? 9999,
-                  'is_available': assetItem['is_available'] ?? true,
+                  'stock': 20,
+                  'is_available': true,
                   'isFromDb': false,
                 });
               }
             }
 
-            // Tumpuk atau gabungkan dengan real-time data dari database Supabase
             for (var dbItem in dbMenus) {
               String dbId = dbItem['id'].toString();
-              String imgUrl = dbItem['image_url'] ?? dbItem['images_url'] ?? dbItem['image'] ?? '';
+              String imgUrl = (dbItem['image_url'] ?? dbItem['image'] ?? dbItem['images_url'] ?? '').toString();
+              String cleanCategory = _mapCategoryToLocal(dbItem['category'] ?? 'Kopi');
               
               int index = combinedList.indexWhere((element) => element['id'].toString() == dbId);
               
               Map<String, dynamic> normalizedItem = {
-                'id': dbItem['id'],
+                'id': dbId,
                 'name': dbItem['name'] ?? '',
-                'price': dbItem['price'] ?? 0,
-                'category': dbItem['category'] ?? 'Kopi',
+                'price': int.tryParse(dbItem['price'].toString()) ?? 0,
+                'category': cleanCategory,
                 'image': imgUrl,
                 'desc': dbItem['description'] ?? dbItem['desc'] ?? '',
-                'stock': dbItem['stock'] ?? 0,
+                'stock': int.tryParse(dbItem['stock'].toString()) ?? 20,
                 'is_available': dbItem['is_available'] ?? true,
                 'isFromDb': true,
               };
 
               if (index != -1) {
-                // Jika ID sama (Aset yang diedit), lakukan override data terupdate secara bersih
                 combinedList[index] = normalizedItem;
               } else {
-                // Jika menu baru hasil tambah data, masukkan ke list utama
-                combinedList.add(normalizedItem);
+                combinedList.insert(0, normalizedItem);
               }
             }
 
             _combinedStreamController.add(combinedList);
           }, onError: (error) {
-            debugPrint("Realtime Stream Error: $error");
+            debugPrint("Koneksi Stream Gagal: $error");
           });
     } catch (e) {
       debugPrint("Gagal menginisialisasi Realtime Stream Supabase: $e");
-      // Fallback jika database tidak terjangkau agar aplikasi tidak crash
-      List<Map<String, dynamic>> fallbackList = [];
-      for (var list in assetMenuData.values) {
-        fallbackList.addAll(list);
-      }
-      _combinedStreamController.add(fallbackList);
+      _emitFallback();
     }
   }
 
-  // Fungsi hapus menu asli dari database Supabase secara permanen
+  void _emitFallback() {
+    List<Map<String, dynamic>> fallbackList = [];
+    for (var list in assetMenuData.values) {
+      for (var item in list) {
+        fallbackList.add({
+          'id': item['id'].toString(),
+          'name': item['name'],
+          'price': item['price'],
+          'category': item['category'],
+          'image': item['image'] ?? '',
+          'desc': item['desc'] ?? '',
+          'stock': 20,
+          'is_available': true,
+          'isFromDb': false,
+        });
+      }
+    }
+    _combinedStreamController.add(fallbackList);
+  }
+
+  void _openEditBottomSheet(Map<String, dynamic> item) {
+    final nameController = TextEditingController(text: item['name']);
+    final priceController = TextEditingController(text: item['price'].toString());
+    final descController = TextEditingController(text: item['desc']);
+    final imageController = TextEditingController(text: item['image']);
+    String currentCategory = _mapCategoryToLocal(item['category'] ?? 'Kopi');
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+      builder: (context) {
+        return Padding(
+          padding: EdgeInsets.only(
+            bottom: MediaQuery.of(context).viewInsets.bottom,
+            left: 20, right: 20, top: 25,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text("Edit Detail Menu", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: GalleryTheme.priceColor)),
+                const SizedBox(height: 15),
+                TextField(
+                  controller: nameController,
+                  decoration: const InputDecoration(labelText: "Nama Menu", border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: priceController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: "Harga (Rp)", border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: descController,
+                  decoration: const InputDecoration(labelText: "Deskripsi", border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: imageController,
+                  decoration: const InputDecoration(labelText: "URL Foto / Path Asset", border: OutlineInputBorder()),
+                ),
+                const SizedBox(height: 15),
+                StatefulBuilder(
+                  builder: (context, setBottomSheetState) => DropdownButtonFormField<String>(
+                    value: currentCategory,
+                    decoration: const InputDecoration(labelText: "Kategori", border: OutlineInputBorder()),
+                    items: ["Kopi", "Non-Kopi", "Snack", "Food"].map((cat) {
+                      return DropdownMenuItem(value: cat, child: Text(cat));
+                    }).toList(),
+                    onChanged: (val) {
+                      if (val != null) setBottomSheetState(() => currentCategory = val);
+                    },
+                  ),
+                ),
+                const SizedBox(height: 25),
+                ElevatedButton(
+                  onPressed: () async {
+                    Navigator.pop(context); 
+                    await _updateMenuInDatabase(
+                      id: item['id'],
+                      name: nameController.text.trim(),
+                      price: int.tryParse(priceController.text) ?? 0,
+                      desc: descController.text.trim(),
+                      img: imageController.text.trim(),
+                      cat: currentCategory,
+                      isFromDb: item['isFromDb'] ?? false,
+                    );
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: GalleryTheme.priceColor,
+                    minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                  child: const Text("Simpan Perubahan", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+                const SizedBox(height: 25),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+ Future<void> _updateMenuInDatabase({
+  required String id,
+  required String name,
+  required int price,
+  required String desc,
+  required String img,
+  required String cat,
+  required bool isFromDb,
+}) async {
+  try {
+    final supabase = Supabase.instance.client;
+    final String dbMappedCategory = _mapCategoryToDb(cat);
+
+    final payload = {
+      'name': name,
+      'price': price,
+      'description': desc,
+      'image_url': img,
+      'category': dbMappedCategory,
+      'stock': 20,
+      'is_available': true,
+    };
+
+    if (isFromDb) {
+      await supabase.from('menus').update(payload).eq('id', id);
+    } else {
+      await supabase.from('menus').insert(payload);
+    }
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Berhasil diperbarui/ditambahkan!"), backgroundColor: Colors.green),
+      );
+      _refreshData(); 
+    }
+  } catch (e) {
+    debugPrint("Gagal memperbarui: $e");
+  }
+}
+
   Future<void> _deleteMenu(String id) async {
     try {
-      // Hapus data dari tabel 'menus' di database Supabase berdasarkan product id
       await Supabase.instance.client.from('menus').delete().eq('id', id);
-      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Menu berhasil dihapus dari sistem pusat"), 
-            backgroundColor: Colors.redAccent
-          ),
+          const SnackBar(content: Text("Menu berhasil dihapus dari sistem pusat"), backgroundColor: Colors.redAccent),
         );
       }
     } catch (e) {
       debugPrint("Gagal menghapus menu dari database: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Gagal menghapus data: $e"), backgroundColor: Colors.red),
-        );
-      }
     }
   }
 
-  // Mengembalikan Stream Gabungan Realtime untuk dikonsumsi UI
   Stream<List<Map<String, dynamic>>> _getAdaptiveStream() {
     return _combinedStreamController.stream;
   }
 
-  // Memicu penyegaran manual aman jika diperlukan setelah navigasi kembali
   void _refreshData() {
     if (mounted) setState(() {});
   }
@@ -190,8 +332,8 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
       backgroundColor: GalleryTheme.background,
       body: SafeArea(
         child: CustomScrollView(
+          physics: const BouncingScrollPhysics(),
           slivers: [
-            // Header Dinamis dengan Foto Profil Database
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.all(20),
@@ -207,13 +349,15 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
                     const SizedBox(width: 12),
                     const Text("Selasar Ruang", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
                     const Spacer(),
-                    const Icon(Icons.settings, color: GalleryTheme.primary),
+                    IconButton(
+                      icon: const Icon(Icons.refresh, color: GalleryTheme.primary),
+                      onPressed: () => _refreshData(),
+                    ),
                   ],
                 ),
               ),
             ),
 
-            // Title
             const SliverToBoxAdapter(
               child: Padding(
                 padding: EdgeInsets.symmetric(horizontal: 20),
@@ -229,29 +373,27 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
               ),
             ),
 
-            // Button Tambah Baru (Warna diperbarui & diperbaiki agar tidak error)
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 20),
                 child: ElevatedButton.icon(
                   onPressed: () {
                     Navigator.pushNamed(context, '/upload_menu').then((value) {
-                      if (value == true) _refreshData();
+                      _refreshData();
                     });
                   },
                   icon: const Icon(Icons.add, color: Colors.white),
                   label: const Text("Tambah Menu Baru", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: GalleryTheme.primary, // Diselaraskan menggunakan warna tua utama
+                    backgroundColor: GalleryTheme.customGreen, 
                     minimumSize: const Size(double.infinity, 50),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    elevation: 1,
+                    elevation: 0,
                   ),
                 ),
               ),
             ),
 
-            // Search & Category Chips
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.all(20),
@@ -276,6 +418,7 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
                         itemCount: _categories.length,
                         itemBuilder: (context, index) {
                           bool isSelected = _selectedCategory == _categories[index];
+                          
                           return Padding(
                             padding: const EdgeInsets.only(right: 10),
                             child: ChoiceChip(
@@ -284,8 +427,11 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
                               onSelected: (val) {
                                 setState(() => _selectedCategory = _categories[index]);
                               },
-                              selectedColor: GalleryTheme.primary,
-                              labelStyle: TextStyle(color: isSelected ? Colors.white : Colors.black),
+                              selectedColor: GalleryTheme.customGreen, 
+                              labelStyle: TextStyle(
+                                color: isSelected ? Colors.white : Colors.black,
+                                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal
+                              )
                             ),
                           );
                         },
@@ -296,13 +442,11 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
               ),
             ),
 
-            // Data Stream Terintegrasi Real-time Supabase & Lokal Asset
             StreamBuilder<List<Map<String, dynamic>>>(
               stream: _getAdaptiveStream(),
               builder: (context, snapshot) {
                 List<Map<String, dynamic>> currentMenus = snapshot.data ?? [];
 
-                // Filter Pencarian & Kategori secara real-time
                 final filteredList = currentMenus.where((item) {
                   final nameMatch = item['name'].toString().toLowerCase().contains(_searchController.text.toLowerCase());
                   final categoryMatch = _selectedCategory == "Semua" || item['category'].toString().toLowerCase() == _selectedCategory.toLowerCase();
@@ -311,14 +455,14 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
 
                 if (filteredList.isEmpty && snapshot.connectionState == ConnectionState.waiting) {
                   return const SliverFillRemaining(
-                    child: Center(child: CircularProgressIndicator(color: GalleryTheme.primary)),
+                    child: Center(child: CircularProgressIndicator(color: GalleryTheme.priceColor)),
                   );
                 }
 
                 if (filteredList.isEmpty) {
                   return const SliverFillRemaining(
                     hasScrollBody: false,
-                    child: Center(child: Text("Menu tidak ditemukan", style: TextStyle(color: Colors.grey))),
+                    child: Center(child: Text("Menu tidak ditemukan dalam katalog", style: TextStyle(color: Colors.grey))),
                   );
                 }
 
@@ -348,7 +492,7 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(15),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 4))],
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(
         children: [
@@ -362,7 +506,6 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
                       : _errorImg())
                   : Image.asset(imgPath, height: 180, width: double.infinity, fit: BoxFit.cover, errorBuilder: (c,e,s) => _errorImg()),
               ),
-              // Tombol Aksi Kanan Atas
               Positioned(
                 top: 10, right: 10,
                 child: Row(
@@ -371,18 +514,7 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
                       backgroundColor: Colors.white.withOpacity(0.9), radius: 18,
                       child: IconButton(
                         icon: const Icon(Icons.edit, color: Colors.orange, size: 16),
-                        onPressed: () {
-                          // Mengirim data objek menu existing yang lengkap untuk mode Edit murni
-                          Navigator.pushNamed(
-                            context, 
-                            '/upload_menu', 
-                            arguments: item,
-                          ).then((value) {
-                            if (value == true) {
-                              _refreshData();
-                            }
-                          });
-                        },
+                        onPressed: () => _openEditBottomSheet(item), 
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -401,7 +533,14 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
           ListTile(
             title: Text(item['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.bold)),
             subtitle: Text(item['category'] ?? '', style: const TextStyle(color: GalleryTheme.textSecondary, fontSize: 13)),
-            trailing: Text("Rp ${item['price']}", style: const TextStyle(color: GalleryTheme.primary, fontWeight: FontWeight.bold, fontSize: 16)),
+            trailing: Text(
+              "Rp ${item['price']}", 
+              style: const TextStyle(
+                color: GalleryTheme.priceColor, 
+                fontWeight: FontWeight.bold, 
+                fontSize: 16
+              )
+            ),
           ),
         ],
       ),
@@ -435,7 +574,6 @@ class _MenuGalleryPageState extends State<MenuGalleryPage> {
   }
 }
 
-// --- COMPONENT COMPANION DIALOG ---
 class CustomDeleteDialog extends StatelessWidget {
   final String name;
   final VoidCallback onConfirm;
@@ -445,10 +583,11 @@ class CustomDeleteDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: const Text("Hapus Menu"),
-      content: Text("Apakah kamu yakin ingin menghapus '$name' dari database katalog?"),
+      content: Text("Apakah kamu yakin ingin menghapus '$name' dari database katalog secara permanen?"),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal")),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Batal", style: TextStyle(color: Colors.grey))),
         TextButton(
           onPressed: () {
             onConfirm();

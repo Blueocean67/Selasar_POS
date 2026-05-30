@@ -11,7 +11,7 @@ enum PromoStatus {
 }
 
 // ==========================================
-// MODEL DATA PROMO (MENDUKUNG SCOPE PRODUK & KATEGORI)
+// MODEL DATA PROMO
 // ==========================================
 class PromoModel {
   final String id;
@@ -24,7 +24,6 @@ class PromoModel {
   final DateTime startDate;
   final DateTime endDate;
   
-  // Fitur Automasi Cakupan Diskon (Global, Kategori, atau Spesifik Produk)
   final String scope; // 'global', 'category', 'product'
   final List<String> targetProductIds;
   final List<String> targetCategories;
@@ -127,13 +126,63 @@ class PromoProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
 
   PromoProvider() {
+    _promos = [
+      PromoModel(
+        id: "dummy_kopi_1",
+        code: "KOPIHEMAT",
+        description: "Diskon 20% khusus item dalam kategori Kopi, Max Rp 10.000",
+        discountPercentage: 20.0,
+        maxDiscount: 10000,
+        minTransaction: 0,
+        isActive: true,
+        startDate: DateTime.now().subtract(const Duration(days: 1)),
+        endDate: DateTime.now().add(const Duration(days: 7)),
+        scope: "category",
+        targetCategories: ["Kopi"],
+      ),
+      PromoModel(
+        id: "dummy_kopi_2",
+        code: "COFFEEADDICT",
+        description: "Diskon besar 30% khusus Kopi, Max Rp 15.000",
+        discountPercentage: 30.0,
+        maxDiscount: 15000,
+        minTransaction: 20000,
+        isActive: true,
+        startDate: DateTime.now().subtract(const Duration(days: 1)),
+        endDate: DateTime.now().add(const Duration(days: 5)),
+        scope: "category",
+        targetCategories: ["Kopi"],
+      ),
+      PromoModel(
+        id: "dummy_global",
+        code: "SELASARKAN",
+        description: "Potongan global 10% untuk semua item di keranjang",
+        discountPercentage: 10.0,
+        maxDiscount: 0,
+        minTransaction: 0,
+        isActive: true,
+        startDate: DateTime.now().subtract(const Duration(days: 1)),
+        endDate: DateTime.now().add(const Duration(days: 10)),
+        scope: "global",
+      ),
+    ];
+
     _initRealtimePromoListener();
   }
 
-  // SINKRONISASI REALTIME OTOMATIS: Perbaikan update referensi objek agar langsung re-kalkulasi state
   void _initRealtimePromoListener() {
     _supabase.from('promos').stream(primaryKey: ['id']).listen((data) {
-      _promos = data.map((item) => PromoModel.fromMap(item)).toList();
+      final dbItems = data.map((item) => PromoModel.fromMap(item)).toList();
+      
+      final Map<String, PromoModel> uniquePromos = {};
+      for (var p in _promos) {
+        if (p.id.startsWith("dummy_")) uniquePromos[p.code] = p;
+      }
+      for (var p in dbItems) {
+        uniquePromos[p.code] = p;
+      }
+
+      _promos = uniquePromos.values.toList();
       
       if (_currentAppliedPromo != null) {
         final index = _promos.indexWhere((p) => p.id == _currentAppliedPromo!.id);
@@ -147,13 +196,21 @@ class PromoProvider with ChangeNotifier {
     });
   }
 
-  // 1. AMBUL DATA DARI DATABASE
   Future<void> fetchPromosFromDatabase() async {
     _isLoading = true;
     notifyListeners();
     try {
       final response = await _supabase.from('promos').select().order('id', ascending: false);
-      _promos = List<Map<String, dynamic>>.from(response).map((item) => PromoModel.fromMap(item)).toList();
+      final dbItems = List<Map<String, dynamic>>.from(response).map((item) => PromoModel.fromMap(item)).toList();
+      
+      final Map<String, PromoModel> uniquePromos = {};
+      for (var p in _promos) {
+        if (p.id.startsWith("dummy_")) uniquePromos[p.code] = p;
+      }
+      for (var p in dbItems) {
+        uniquePromos[p.code] = p;
+      }
+      _promos = uniquePromos.values.toList();
     } catch (e) {
       debugPrint("Gagal mengambil data promo: $e");
     } finally {
@@ -162,7 +219,6 @@ class PromoProvider with ChangeNotifier {
     }
   }
 
-  // 2. TAMBAH PROMO BARU
   Future<bool> addPromo({
     required String code,
     required String description,
@@ -204,7 +260,6 @@ class PromoProvider with ChangeNotifier {
     }
   }
 
-  // 3. EDIT PROMO EXISTING
   Future<bool> editPromo({
     required String id,
     required String code,
@@ -231,6 +286,25 @@ class PromoProvider with ChangeNotifier {
 
     if (finalEndDate.isBefore(finalStartDate)) return false;
 
+    if (id.startsWith("dummy_")) {
+      _promos[index] = PromoModel(
+        id: id,
+        code: code.toUpperCase().trim(),
+        description: description,
+        discountPercentage: discountPercentage,
+        maxDiscount: maxDiscount,
+        minTransaction: minTransaction,
+        isActive: finalIsActive,
+        startDate: finalStartDate,
+        endDate: finalEndDate,
+        scope: scope ?? _promos[index].scope,
+        targetProductIds: targetProductIds ?? _promos[index].targetProductIds,
+        targetCategories: targetCategories ?? _promos[index].targetCategories,
+      );
+      notifyListeners();
+      return true;
+    }
+
     try {
       await _supabase.from('promos').update({
         'code': code.toUpperCase().trim(),
@@ -252,21 +326,28 @@ class PromoProvider with ChangeNotifier {
     }
   }
 
-  // 4. TOGGLE STATUS AKTIF / MATI
   Future<void> togglePromoStatus(String id) async {
     final index = _promos.indexWhere((p) => p.id == id);
     if (index == -1) return;
 
-    final targetStatus = !_promos[index].isActive;
+    _promos[index].isActive = !_promos[index].isActive;
+    notifyListeners();
+
+    if (id.startsWith("dummy_")) return;
+
     try {
-      await _supabase.from('promos').update({'is_active': targetStatus}).eq('id', id);
+      await _supabase.from('promos').update({'is_active': _promos[index].isActive}).eq('id', id);
     } catch (e) {
       debugPrint("Gagal update status: $e");
     }
   }
 
-  // 5. HAPUS PROMO
   Future<bool> deletePromo(String id) async {
+    _promos.removeWhere((p) => p.id == id);
+    notifyListeners();
+
+    if (id.startsWith("dummy_")) return true;
+
     try {
       await _supabase.from('promos').delete().eq('id', id);
       return true;
@@ -276,15 +357,18 @@ class PromoProvider with ChangeNotifier {
     }
   }
 
-  // 6. MENERAPKAN VOUCHER DENGAN VALIDASI STRUKTUR CART YANG KETAT
   String? applyPromoByCode(String code, int currentTransactionTotal, List<Map<String, dynamic>> cartItems) {
     final cleanCode = code.toUpperCase().trim();
-    final promo = _promos.cast<PromoModel?>().firstWhere(
-      (p) => p?.code == cleanCode,
-      orElse: () => null,
-    );
+    
+    PromoModel promo;
+    try {
+      promo = _promos.firstWhere(
+        (p) => p.code.toUpperCase() == cleanCode,
+      );
+    } catch (_) {
+      return "Kode promo tidak ditemukan.";
+    }
 
-    if (promo == null) return "Kode promo tidak ditemukan.";
     if (!promo.isActive) return "Promo ini sudah dinonaktifkan oleh toko.";
     if (promo.status == PromoStatus.scheduled) return "Promo belum dimulai.";
     if (promo.status == PromoStatus.expired) return "Promo ini telah kadaluwarsa.";
@@ -292,13 +376,19 @@ class PromoProvider with ChangeNotifier {
       return "Minimal transaksi Rp ${promo.minTransaction} untuk promo ini.";
     }
 
-    // Validasi kesesuaian produk/kategori di dalam keranjang belanja
     if (promo.scope == 'product') {
-      bool hasValidProduct = cartItems.any((item) => promo.targetProductIds.contains(item['id'].toString()));
-      if (!hasValidProduct) return "Keranjang Anda tidak berisi produk yang ditentukan untuk promo ini.";
-    } else if (promo.scope == 'category') {
-      bool hasValidCategory = cartItems.any((item) => promo.targetCategories.contains(item['category'].toString()));
-      if (!hasValidCategory) return "Keranjang Anda tidak berisi kategori produk promo ini.";
+      bool hasValidProduct = cartItems.any((item) {
+        String itemId = item['id'].toString();
+        return promo.targetProductIds.contains(itemId);
+      });
+      if (!hasValidProduct) return "Produk di keranjang tidak termasuk promo ini.";
+    } 
+    else if (promo.scope == 'category') { 
+      bool hasValidCategory = cartItems.any((item) {
+        String itemCat = (item['category'] ?? '').toString().toLowerCase().trim();
+        return promo.targetCategories.any((c) => c.toLowerCase().trim() == itemCat);
+      });
+      if (!hasValidCategory) return "Kategori produk tidak sesuai.";
     }
 
     _currentAppliedPromo = promo;
@@ -306,7 +396,6 @@ class PromoProvider with ChangeNotifier {
     return null; 
   }
 
-  // 7. HITUNG DISKON KATEGORI & PRODUK SECARA REALTIME (ANTI DOUBLE / ERROR)
   int calculateDiscount(int currentTransactionTotal, List<Map<String, dynamic>> cartItems) {
     if (_currentAppliedPromo == null || !_currentAppliedPromo!.isCurrentlyValid) return 0;
 
@@ -318,14 +407,14 @@ class PromoProvider with ChangeNotifier {
     } else {
       for (var item in cartItems) {
         String itemId = item['id'].toString();
-        String itemCategory = item['category']?.toString() ?? '';
+        String itemCategory = (item['category'] ?? '').toString().toLowerCase().trim(); 
         int price = int.tryParse(item['price'].toString()) ?? 0;
         int qty = int.tryParse(item['quantity'].toString()) ?? int.tryParse(item['qty'].toString()) ?? 1;
         int itemTotalBilling = price * qty;
 
         if (promo.scope == 'product' && promo.targetProductIds.contains(itemId)) {
           calculatedDiscount += itemTotalBilling * (promo.discountPercentage / 100);
-        } else if (promo.scope == 'category' && promo.targetCategories.contains(itemCategory)) {
+        } else if (promo.scope == 'category' && promo.targetCategories.any((c) => c.toLowerCase().trim() == itemCategory)) {
           calculatedDiscount += itemTotalBilling * (promo.discountPercentage / 100);
         }
       }
@@ -399,9 +488,9 @@ class PromoProvider with ChangeNotifier {
           'name': item['name'] ?? '',
           'price': item['price'] ?? 0,
           'category': item['category'] ?? 'Kopi',
-          'image': item['images_url'] ?? item['image_url'] ?? item['image'] ?? '',
+          'image': item['image_url'] ?? item['images_url'] ?? item['image'] ?? '',
           'stock': item['stock'] ?? 0,
-          'isAsset': !(item['images_url'] != null && item['images_url'].toString().startsWith('http')),
+          'isAsset': !(item['image_url'] != null && item['image_url'].toString().startsWith('http')),
         };
       }
 
@@ -414,12 +503,14 @@ class PromoProvider with ChangeNotifier {
   Future<void> updateStock(String id, int targetStock) async {
     try {
       final item = _allMenusWithStock.firstWhere((element) => element['id'] == id);
+      
+      // PERBAIKAN UTAMA: Mengubah 'images_url' menjadi 'image_url' sesuai struktur schema tabel database Anda
       await _supabase.from('menus').upsert({
         'id': id,
         'name': item['name'],
         'price': item['price'],
         'category': item['category'],
-        'images_url': item['image'],
+        'image_url': item['image'], 
         'stock': targetStock,
       });
     } catch (e) {

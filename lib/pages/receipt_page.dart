@@ -4,7 +4,7 @@ import 'package:intl/intl.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:selasar_pos/main.dart';
-
+import 'dart:convert';
 
 class ReceiptPage extends StatefulWidget {
   const ReceiptPage({super.key});
@@ -31,13 +31,15 @@ class _ReceiptPageState extends State<ReceiptPage> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _processIntegrationsAndStates();
+      if (mounted) {
+        _processIntegrationsAndStates();
+      }
     });
   }
 
-  // INTEGRASI STATE POS REAL-TIME: DATABASE, STOK, DAN SUMMARY KONSISTEN
+  // SINKRONISASI DATA UTAMA DARI SINGLE SOURCE OF TRUTH (SUPABASE DATABASE)
   Future<void> _processIntegrationsAndStates() async {
-    if (_hasProcessedState) return;
+    if (_hasProcessedState || !mounted) return;
     
     final Object? args = ModalRoute.of(context)?.settings.arguments;
     if (args is! Map<String, dynamic>) return;
@@ -45,97 +47,138 @@ class _ReceiptPageState extends State<ReceiptPage> {
     setState(() => _hasProcessedState = true);
     final Map<String, dynamic> orderData = args;
 
-    // Pengaman: Jangan proses jika transaksi kosong atau tidak memiliki ID
-    final String targetTxId = orderData['transaction_id'] ?? orderData['id']?.toString() ?? '';
+    // Ambil target ID transaksi yang valid dari alur POS sebelumnya
+    final String targetTxId = (orderData['transaction_id'] ?? orderData['id'] ?? orderData['tx_id'] ?? '').toString();
+    
+    final String tableNumber = (orderData['table_number'] ?? orderData['table'] ?? '--').toString();
+    final String customerName = (orderData['customer_name'] ?? orderData['customer'] ?? orderData['pelanggan'] ?? 'Pelanggan Selasar').toString();
+    final String cashierName = (orderData['cashier_name'] ?? orderData['operator_name'] ?? orderData['cashier'] ?? 'Kasir Utama').toString();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Pesanan baru masuk • Meja $tableNumber ($customerName)"),
+          backgroundColor: const Color(0xFF435334),
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+
     if (targetTxId.isEmpty) return;
 
     try {
-      // 1. Tarik Data Utama dari Single Source of Truth (Database Supabase)
+      // Mengambil data terupdate langsung dari DB agar identik dengan history_order_page
       final dbData = await _supabase
           .from('transactions')
           .select()
           .eq('id', targetTxId)
           .maybeSingle();
 
-      if (dbData != null && mounted) {
+      if (!mounted) return;
+
+      if (dbData != null) {
         setState(() {
           _liveDbTransactionData = dbData;
         });
       }
 
-      // PARSING UNTUK DIKIRIM KE HISTORY STATE MANAGER (REAL-TIME NOTIFICATION)
-      final String customerName = dbData?['customer_name'] ?? orderData['customer_name'] ?? orderData['customer'] ?? 'Pelanggan Selasar';
-      
-      int itemsCount = 0;
-      if (orderData.containsKey('items')) {
-        final List<dynamic> items = orderData['items'] is List ? orderData['items'] : [];
-        itemsCount = items.length;
-      } else if (dbData?['product_summary'] != null) {
-        itemsCount = dbData!['product_summary'].toString().split(',').length;
-      }
-      if (itemsCount == 0) itemsCount = 1;
-
+      // Sinkronisasi data ke state lokal yang dipastikan sama persis penamaannya dengan halaman struk/history
+      final String finalCustomer = dbData?['customer_name'] ?? customerName;
+      final String finalCashier = dbData?['cashier_name'] ?? cashierName;
+      final String finalTable = dbData?['table_number'] ?? tableNumber;
       final double finalTotal = double.tryParse((dbData?['total_price'] ?? orderData['total_price'] ?? 0).toString()) ?? 0.0;
+      final double finalDiscount = double.tryParse((dbData?['discount_amount'] ?? orderData['discount_amount'] ?? orderData['discount'] ?? 0).toString()) ?? 0.0;
+      final double finalSubtotal = double.tryParse((dbData?['subtotal'] ?? orderData['subtotal'] ?? (finalTotal + finalDiscount)).toString()) ?? finalTotal;
+      final String finalPaymentMethod = (dbData?['payment_method'] ?? orderData['payment_method'] ?? orderData['payment_type'] ?? orderData['metode_pembayaran'] ?? 'QRIS').toString();
 
-      // MENYAMBUNGKAN & MEMASUKKAN DATA KE HISTORY PAGE VIA PROVIDER
-      if (mounted) {
-        try {
-          context.read<OrderHistoryManager>().addLiveOrderFromCashier(
-            customerName: customerName,
-            totalPrice: finalTotal.toInt(),
-            itemsCount: itemsCount,
-          );
-          
-          // Memunculkan Notifikasi Banner Instan di Aplikasi
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text("Pesanan baru dari $customerName berhasil masuk ke Riwayat!"),
-              backgroundColor: const Color(0xFF556B2F),
-              behavior: SnackBarBehavior.floating,
-              duration: const Duration(seconds: 3),
-            ),
-          );
-        } catch (providerError) {
-          debugPrint("[History Link Error] OrderHistoryManager belum di-provide di context ini: $providerError");
+      List<dynamic> targetItems = [];
+      if (dbData?['menu_items'] != null) {
+        if (dbData?['menu_items'] is List) {
+          targetItems = dbData?['menu_items'];
+        } else if (dbData?['menu_items'] is String) {
+          try { targetItems = jsonDecode(dbData?['menu_items']); } catch (_) {}
+        }
+      } else if (orderData['menu_items'] is List) {
+        targetItems = orderData['menu_items'];
+      } else if (orderData['items'] is List) {
+        targetItems = orderData['items'];
+      }
+
+      // Memetakan ulang struktur item ke format standar history rincian produk agar datanya identik
+      List<Map<String, dynamic>> structuredItems = [];
+      for (var item in targetItems) {
+        if (item is Map) {
+          structuredItems.add({
+            'id': (item['id'] ?? item['menu_id'] ?? '').toString(),
+            'name': (item['name'] ?? item['nama_menu'] ?? item['nama'] ?? 'Menu').toString(),
+            'nama_menu': (item['name'] ?? item['nama_menu'] ?? item['nama'] ?? 'Menu').toString(),
+            'qty': int.tryParse((item['quantity'] ?? item['qty'] ?? 1).toString()) ?? 1,
+            'quantity': int.tryParse((item['quantity'] ?? item['qty'] ?? 1).toString()) ?? 1,
+            'price': double.tryParse((item['price'] ?? item['harga'] ?? 0).toString()) ?? 0.0,
+            'harga': double.tryParse((item['price'] ?? item['harga'] ?? 0).toString()) ?? 0.0,
+            'note': item['note']?.toString(),
+          });
         }
       }
 
-      // 2. Automasi Sinkronisasi Pengurangan Stok
-      if (orderData.containsKey('items')) {
-        final List<dynamic> items = orderData['items'] is List ? orderData['items'] : [];
-        for (var item in items) {
-          if (item is Map) {
-            final String itemId = item['id']?.toString() ?? '';
-            final int qtyPurchased = int.tryParse(item['quantity'].toString()) ?? 
-                                     int.tryParse(item['qty'].toString()) ?? 1;
+      if (mounted) {
+        try {
+          // Sinkronisasi data ke Provider History Manager dengan struktur parameter yang SAMA PERSIS
+          Provider.of<OrderHistoryManager>(context, listen: false).addOrder({
+            'id': targetTxId,
+            'transaction_id': targetTxId,
+            'customer_name': finalCustomer,
+            'customer': finalCustomer,
+            'cashier_name': finalCashier,
+            'cashier': finalCashier,
+            'table_number': finalTable,
+            'table': finalTable,
+            'total_price': finalTotal.toInt(),
+            'total': finalTotal.toInt(),
+            'subtotal': finalSubtotal.toInt(),
+            'discount_amount': finalDiscount.toInt(),
+            'items': structuredItems,
+            'menu_items': structuredItems,
+            'payment_method': finalPaymentMethod,
+            'created_at': dbData?['created_at'] ?? orderData['created_at'] ?? DateTime.now().toIso8601String(),
+          });
+        } catch (providerError) {
+          debugPrint("[History Link Error] Provider context error: $providerError");
+        }
+      }
 
-            if (itemId.isNotEmpty) {
-              final List<dynamic> menuCheck = await _supabase
-                  .from('menus')
-                  .select('stock')
-                  .eq('id', itemId);
+      // Manajemen Pengurangan Stok Akurat berdasarkan item transaksi riil
+      if (structuredItems.isNotEmpty) {
+        for (var item in structuredItems) {
+          final String itemId = item['id'].toString();
+          final int qtyPurchased = item['qty'];
 
-              if (menuCheck.isNotEmpty) {
-                final int currentStock = menuCheck.first['stock'] ?? 20;
-                if (currentStock < 9000) {
-                  final int newStock = (currentStock - qtyPurchased).clamp(0, 9999);
-                  await _supabase
-                      .from('menus')
-                      .update({'stock': newStock})
-                      .eq('id', itemId);
-                }
+          if (itemId.isNotEmpty) {
+            final List<dynamic> menuCheck = await _supabase
+                .from('menus')
+                .select('stock')
+                .eq('id', itemId);
+
+            if (menuCheck.isNotEmpty) {
+              final int currentStock = menuCheck.first['stock'] ?? 20;
+              if (currentStock < 9000) {
+                final int newStock = (currentStock - qtyPurchased).clamp(0, 9999);
+                await _supabase
+                    .from('menus')
+                    .update({'stock': newStock})
+                    .eq('id', itemId);
               }
             }
           }
         }
       }
-      debugPrint("[POS Engine] Transaksi #$targetTxId terverifikasi sinkron di seluruh komponen dashboard.");
     } catch (e) {
-      debugPrint("[POS Engine Error] Sinkronisasi database gagal: $e");
+      debugPrint("[POS Receipt Engine Error] Gagal memvalidasi pipeline stream: $e");
     }
   }
 
-  // FITUR CETAK BLUETOOTH THERMAL
+  // FITUR CETAK BLUETOOTH THERMAL VIA SIMULASI
   Future<void> _simulateBluetoothPrint(Map<String, dynamic> txData) async {
     setState(() => _isPrinting = true);
 
@@ -199,38 +242,58 @@ class _ReceiptPageState extends State<ReceiptPage> {
   Widget build(BuildContext context) {
     final Object? args = ModalRoute.of(context)?.settings.arguments;
     final Map<String, dynamic> orderData = (args is Map<String, dynamic>) ? args : {};
-
-    final String transactionId = _liveDbTransactionData['id']?.toString() ?? 
-        orderData['transaction_id'] ?? orderData['id']?.toString() ?? "SR-MANUAL";
+    debugPrint("--- DATA YANG DITERIMA DI RECEIPT ---");
+    debugPrint("Args: $args");
     
-    final String customerName = _liveDbTransactionData['customer_name'] ?? 
-        orderData['customer_name'] ?? orderData['customer'] ?? 'Pelanggan Selasar';
-    
-    final String tableNumber = _liveDbTransactionData['table_number']?.toString() ?? 
-        orderData['table_number']?.toString() ?? orderData['table']?.toString() ?? '--';
-    
-    final String paymentMethod = _liveDbTransactionData['payment_method'] ?? 
-        orderData['payment_method'] ?? 'Tunai';
-
-    final String cashierName = _liveDbTransactionData['cashier_name'] ?? 
-        orderData['cashier_name'] ?? 'Kasir Utama';
+    // SINKRONISASI FLUID: GUNAKAN DATA TERBARU DATABASE JIKA TERSEDIA, JIKA TIDAK GUNAKAN ROUTE ARGUMENTS
+    final String transactionId = (_liveDbTransactionData['id'] ?? orderData['transaction_id'] ?? orderData['id'] ?? "SR-MANUAL").toString();
+    final String customerName = (_liveDbTransactionData['customer_name'] ?? orderData['customer_name'] ?? orderData['customer'] ?? orderData['pelanggan'] ?? 'Pelanggan Selasar').toString();
+    final String tableNumber = (_liveDbTransactionData['table_number'] ?? orderData['table_number'] ?? orderData['table'] ?? '--').toString();
+    final String paymentMethod = (_liveDbTransactionData['payment_method'] ?? orderData['payment_method'] ?? orderData['payment_type'] ?? orderData['metode_pembayaran'] ?? 'Tunai').toString();
+    final String cashierName = (_liveDbTransactionData['cashier_name'] ?? orderData['cashier_name'] ?? orderData['operator_name'] ?? orderData['cashier'] ?? 'Kasir Utama').toString();
 
     final List<Map<String, dynamic>> itemsList = [];
     double subtotal = 0.0;
 
-    if (_liveDbTransactionData['product_summary'] != null) {
+    // Parsing Utama Array menu_items / items argument asli POS
+    List<dynamic> rawItems = [];
+    if (_liveDbTransactionData['menu_items'] != null) {
+      if (_liveDbTransactionData['menu_items'] is List) {
+        rawItems = _liveDbTransactionData['menu_items'];
+      } else if (_liveDbTransactionData['menu_items'] is String) {
+        try { rawItems = jsonDecode(_liveDbTransactionData['menu_items']); } catch (_) {}
+      }
+    } else if (orderData['menu_items'] is List) {
+      rawItems = orderData['menu_items'];
+    } else if (orderData['items'] is List) {
+      rawItems = orderData['items'];
+    }
+
+    if (rawItems.isNotEmpty) {
+      for (var item in rawItems) {
+        if (item is Map) {
+          final double itemPrice = double.tryParse((item['price'] ?? item['harga'] ?? 0).toString()) ?? 0.0;
+          final int itemQty = int.tryParse((item['quantity'] ?? item['qty'] ?? 1).toString()) ?? 1;
+          subtotal += itemPrice * itemQty;
+
+          itemsList.add({
+            'name': (item['name'] ?? item['nama_menu'] ?? item['nama'] ?? 'Menu').toString(),
+            'qty': itemQty,
+            'price': itemPrice,
+            'note': item['note']?.toString()
+          });
+        }
+      }
+    } else if (_liveDbTransactionData['product_summary'] != null) {
       String summary = _liveDbTransactionData['product_summary'].toString();
-      List<String> rawItems = summary.split(',');
-      for (var rawItem in rawItems) {
+      for (var rawItem in summary.split(',')) {
         if (rawItem.contains('(') && rawItem.contains(')')) {
           try {
             String name = rawItem.split('(')[0].trim();
             String qtyStr = rawItem.split('(')[1].replaceAll(')', '').trim();
-            int qty = int.tryParse(qtyStr) ?? 1;
-            
             itemsList.add({
               'name': name,
-              'qty': qty,
+              'qty': int.tryParse(qtyStr) ?? 1,
               'price': 0.0, 
               'note': null
             });
@@ -239,34 +302,16 @@ class _ReceiptPageState extends State<ReceiptPage> {
       }
     }
 
-    if (itemsList.isEmpty || orderData.containsKey('items')) {
-      itemsList.clear();
-      final List<dynamic> customItemsList = orderData['items'] is List ? orderData['items'] : [];
-      for (var item in customItemsList) {
-        if (item is Map) {
-          final double itemPrice = (item['price'] ?? item['harga'] ?? 0).toDouble();
-          final int itemQty = int.tryParse(item['quantity'].toString()) ?? int.tryParse(item['qty'].toString()) ?? 1;
-          subtotal += itemPrice * itemQty;
-
-          itemsList.add({
-            'name': item['name'] ?? item['nama_menu'] ?? 'Menu',
-            'qty': itemQty,
-            'price': itemPrice,
-            'note': item['note']?.toString()
-          });
-        }
-      }
+    // Kalkulasi hitungan struk yang dijamin sinkron & anti-selisih antar halaman
+    double discount = double.tryParse((_liveDbTransactionData['discount_amount'] ?? orderData['discount_amount'] ?? orderData['discount'] ?? 0).toString()) ?? 0.0;
+    double total = double.tryParse((_liveDbTransactionData['total_price'] ?? orderData['total_price'] ?? orderData['total'] ?? 0).toString()) ?? 0.0;
+    
+    if (subtotal == 0.0) {
+      subtotal = double.tryParse((_liveDbTransactionData['subtotal'] ?? orderData['subtotal'] ?? total).toString()) ?? total;
     }
-
-    if (subtotal == 0.0 && _liveDbTransactionData['total_price'] != null) {
-      double dbTotal = double.tryParse(_liveDbTransactionData['total_price'].toString()) ?? 0.0;
-      double dbDiscount = double.tryParse(_liveDbTransactionData['discount_amount'].toString()) ?? 0.0;
-      subtotal = dbTotal + dbDiscount;
+    if (total == 0.0 && subtotal > 0) {
+      total = (subtotal - discount).clamp(0, double.infinity);
     }
-
-    double discount = double.tryParse((_liveDbTransactionData['discount_amount'] ?? orderData['discount'] ?? orderData['diskon'] ?? 0).toString()) ?? 0.0;
-    double total = double.tryParse((_liveDbTransactionData['total_price'] ?? orderData['total_price'] ?? (subtotal - discount)).toString()) ?? 0.0;
-    if (total < 0) total = 0;
     
     double change = double.tryParse((orderData['change'] ?? orderData['kembalian'] ?? 0).toString()) ?? 0.0;
     final currency = NumberFormat.currency(locale: 'id', symbol: 'Rp ', decimalDigits: 0);
@@ -370,9 +415,13 @@ class _ReceiptPageState extends State<ReceiptPage> {
             ),
           ),
           const SizedBox(height: 18),
-          const Text(
-            "SELASAR RUANG",
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: 4, color: ReceiptPage.primaryGreen),
+          const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 16),
+            child: Text(
+              "SELASAR RUANG CAFFE",
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, letterSpacing: 3, color: ReceiptPage.primaryGreen),
+            ),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -410,7 +459,7 @@ class _ReceiptPageState extends State<ReceiptPage> {
           ...itemsList.map((item) => _OrderItemRow(
                 name: item['name'] ?? 'Menu',
                 qty: (item['qty'] ?? 1).toString(),
-                price: item['price'] > 0 ? currency.format(item['price']) : '-',
+                price: item['price'] > 0 ? currency.format(item['price'] * item['qty']) : '-',
                 note: item['note'],
                 currency: currency,
               )),
@@ -428,7 +477,7 @@ class _ReceiptPageState extends State<ReceiptPage> {
                   _totalDetailRow("Kembalian", currency.format(change)),
                 const SizedBox(height: 20),
                 Container(
-                  padding: const EdgeInsets.all(22),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
                   decoration: BoxDecoration(
                     gradient: const LinearGradient(colors: [ReceiptPage.primaryGreen, ReceiptPage.softOlive]),
                     borderRadius: BorderRadius.circular(24),
@@ -515,7 +564,13 @@ class _ReceiptPageState extends State<ReceiptPage> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: const TextStyle(fontSize: 11, color: ReceiptPage.textLight, fontWeight: FontWeight.w500)),
-          Text(value, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: ReceiptPage.textDark)),
+          Flexible(
+            child: Text(
+              value, 
+              textAlign: TextAlign.end,
+              style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: ReceiptPage.textDark),
+            ),
+          ),
         ],
       ),
     );
@@ -525,13 +580,16 @@ class _ReceiptPageState extends State<ReceiptPage> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: TextStyle(fontSize: isBold ? 14 : 12, fontWeight: isBold ? FontWeight.w900 : FontWeight.w600, color: color)),
-        Text(
-          value, 
-          style: TextStyle(
-            fontSize: isBold ? 22 : 12, 
-            fontWeight: isBold ? FontWeight.w900 : FontWeight.w800, 
-            color: isDiscount ? Colors.red : color,
+        Text(label, style: TextStyle(fontSize: isBold ? 12 : 12, fontWeight: isBold ? FontWeight.w900 : FontWeight.w600, color: color)),
+        Flexible(
+          child: Text(
+            value, 
+            textAlign: TextAlign.end,
+            style: TextStyle(
+              fontSize: isBold ? 18 : 12, 
+              fontWeight: isBold ? FontWeight.w900 : FontWeight.w800, 
+              color: isDiscount ? Colors.red : color,
+            ),
           ),
         ),
       ],

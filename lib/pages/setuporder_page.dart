@@ -17,22 +17,92 @@ class _SetupOrderPageState extends State<SetupOrderPage> {
   static const Color textDark = Color(0xFF2D3329);
 
   final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _cashierController = TextEditingController();
+  
   int selectedTableIndex = -1;
-  
-  // Mengubah List menjadi state dinamis untuk simulasi realtime
+  String? _avatarUrl; 
   List<int> occupiedTables = [5, 10, 14]; 
-  
-  // Menambahkan simulasi log order masuk realtime untuk memperkaya data demo statistik
   int totalOrdersToday = 42;
   Timer? _liveSimulationTimer;
 
-  // Supabase safe getter handling
-  User? get user {
+  User? get user => Supabase.instance.client.auth.currentUser;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadCashierProfile();
+    _startLiveDemoSimulation();
+  }
+
+  Future<void> _loadCashierProfile() async {
     try {
-      return Supabase.instance.client.auth.currentUser;
-    } catch (_) {
-      return null;
+      final userId = user?.id;
+      if (userId != null) {
+        final data = await Supabase.instance.client
+            .from('profiles')
+            .select('full_name, avatar_url')
+            .eq('id', userId)
+            .maybeSingle();
+
+        if (data != null && mounted) {
+          setState(() {
+            _cashierController.text = data['full_name'] ?? "Staff Selasar";
+            _avatarUrl = data['avatar_url'];
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint("Gagal memuat profil: $e");
     }
+  }
+
+  void _startLiveDemoSimulation() {
+    _liveSimulationTimer = Timer.periodic(const Duration(seconds: 7), (timer) {
+      if (!mounted) return;
+      
+      final random = Random();
+      setState(() {
+        // 1. Simulasi meja kosong ditinggal pelanggan (Selesai bayar)
+        if (occupiedTables.isNotEmpty && random.nextBool()) {
+          int indexToRemove = random.nextInt(occupiedTables.length);
+          int tableFreed = occupiedTables[indexToRemove];
+          if (tableFreed != selectedTableIndex) {
+            occupiedTables.remove(tableFreed);
+          }
+        }
+        
+        // 2. Simulasi pelanggan baru datang memesan meja acak secara live
+        if (occupiedTables.length < 12 && random.nextBool()) {
+          int newTable = random.nextInt(20);
+          if (!occupiedTables.contains(newTable) && newTable != selectedTableIndex) {
+            occupiedTables.add(newTable);
+            totalOrdersToday++;
+          }
+        }
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _cashierController.dispose();
+    _liveSimulationTimer?.cancel();
+    super.dispose();
+  }
+
+  // Fungsi untuk handle klik meja
+  void _handleTableTap(int index) {
+    setState(() {
+      if (occupiedTables.contains(index)) {
+        // Jika meja terisi, klik akan mengosongkannya (Reset/Simulasi Selesai Makan)
+        occupiedTables.remove(index);
+        if (selectedTableIndex == index) selectedTableIndex = -1;
+      } else {
+        // Jika meja kosong, pilih meja tersebut
+        selectedTableIndex = index;
+      }
+    });
   }
 
   // Fungsi Rekomendasi berdasarkan waktu yang ter-refresh otomatis
@@ -65,70 +135,13 @@ class _SetupOrderPageState extends State<SetupOrderPage> {
     }
   }
 
-  // Fungsi untuk handle klik meja
-  void _handleTableTap(int index) {
-    setState(() {
-      if (occupiedTables.contains(index)) {
-        // Jika meja terisi, klik akan mengosongkannya (Reset/Simulasi Selesai Makan)
-        occupiedTables.remove(index);
-        if (selectedTableIndex == index) selectedTableIndex = -1;
-      } else {
-        // Jika meja kosong, pilih meja tersebut
-        selectedTableIndex = index;
-      }
-    });
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _nameController.addListener(() => setState(() {}));
-    _startLiveDemoSimulation();
-  }
-
-  // Mesin Simulasi Realtime: Mengubah status meja secara acak setiap beberapa detik
-  void _startLiveDemoSimulation() {
-    _liveSimulationTimer = Timer.periodic(const Duration(seconds: 7), (timer) {
-      if (!mounted) return;
-      
-      final random = Random();
-      setState(() {
-        // 1. Simulasi meja kosong ditinggal pelanggan (Selesai bayar)
-        if (occupiedTables.isNotEmpty && random.nextBool()) {
-          int indexToRemove = random.nextInt(occupiedTables.length);
-          int tableFreed = occupiedTables[indexToRemove];
-          if (tableFreed != selectedTableIndex) {
-            occupiedTables.remove(tableFreed);
-          }
-        }
-        
-        // 2. Simulasi pelanggan baru datang memesan meja acak secara live
-        if (occupiedTables.length < 12 && random.nextBool()) {
-          int newTable = random.nextInt(20);
-          if (!occupiedTables.contains(newTable) && newTable != selectedTableIndex) {
-            occupiedTables.add(newTable);
-            totalOrdersToday++;
-          }
-        }
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _nameController.dispose();
-    _liveSimulationTimer?.cancel();
-    super.dispose();
-  }
-
   @override
   Widget build(BuildContext context) {
     final reco = _getAutoRecommendation();
-    final String? fotoUrl = user?.userMetadata?['avatar_url'];
 
     return Scaffold(
       backgroundColor: bgSurface,
-      drawer: _buildDrawer(fotoUrl),
+      drawer: _buildDrawer(),
       appBar: AppBar(
         backgroundColor: bgSurface,
         elevation: 0,
@@ -137,15 +150,14 @@ class _SetupOrderPageState extends State<SetupOrderPage> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16),
-            child: CircleAvatar(
-              radius: 18, 
-              backgroundColor: primaryGreen.withOpacity(0.1),
-              backgroundImage: (fotoUrl != null && fotoUrl.isNotEmpty)
-                  ? NetworkImage(fotoUrl) 
-                  : null,
-              child: (fotoUrl == null || fotoUrl.isEmpty)
-                  ? const Icon(Icons.coffee_maker, size: 18, color: primaryGreen)
-                  : null,
+            child: GestureDetector(
+              onTap: () => Navigator.pushNamed(context, '/profile').then((_) => _loadCashierProfile()),
+              child: CircleAvatar(
+                radius: 18, 
+                backgroundColor: const Color(0xFFF1F1E6),
+                backgroundImage: _avatarUrl != null ? NetworkImage(_avatarUrl!) : null,
+                child: _avatarUrl == null ? const Icon(Icons.person, size: 18, color: primaryGreen) : null,
+              ),
             ),
           )
         ],
@@ -189,6 +201,20 @@ class _SetupOrderPageState extends State<SetupOrderPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  _buildInputLabel("Nama Staff"),
+                  TextField(
+                    controller: _cashierController,
+                    textCapitalization: TextCapitalization.words,
+                    decoration: InputDecoration(
+                      hintText: "Input Nama ",
+                      prefixIcon: const Icon(Icons.badge_outlined, size: 20),
+                      filled: true,
+                      fillColor: bgSurface,
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
                   _buildInputLabel("NAMA PEMESAN"),
                   TextField(
                     controller: _nameController,
@@ -219,19 +245,19 @@ class _SetupOrderPageState extends State<SetupOrderPage> {
     );
   }
 
-  Widget _buildDrawer(String? fotoUrl) {
+  Widget _buildDrawer() {
     return Drawer(
       child: ListView(
         padding: EdgeInsets.zero,
         children: [
           UserAccountsDrawerHeader(
             decoration: const BoxDecoration(color: primaryGreen),
-            accountName: Text(user?.email?.split('@')[0].toUpperCase() ?? "ADMIN SELASAR"),
+            accountName: Text(_cashierController.text.toUpperCase()),
             accountEmail: Text(user?.email ?? "selasar@coffee.com"),
             currentAccountPicture: CircleAvatar(
               backgroundColor: Colors.white24,
-              backgroundImage: (fotoUrl != null && fotoUrl.isNotEmpty) ? NetworkImage(fotoUrl) : null,
-              child: (fotoUrl == null || fotoUrl.isEmpty) ? const Icon(Icons.store, color: Colors.white, size: 32) : null,
+              backgroundImage: _avatarUrl != null ? NetworkImage(_avatarUrl!) : null,
+              child: _avatarUrl == null ? const Icon(Icons.store, color: Colors.white, size: 32) : null,
             ),
           ),
           ListTile(
@@ -318,6 +344,7 @@ class _SetupOrderPageState extends State<SetupOrderPage> {
 
   Widget _buildSubmitButton() {
     bool isActive = _nameController.text.trim().isNotEmpty && 
+                   _cashierController.text.trim().isNotEmpty && 
                    selectedTableIndex != -1 && 
                    !occupiedTables.contains(selectedTableIndex);
 
@@ -327,23 +354,23 @@ class _SetupOrderPageState extends State<SetupOrderPage> {
       child: ElevatedButton(
         onPressed: isActive ? () {
           final String customerName = _nameController.text.trim();
+          final String typedCashierName = _cashierController.text.trim(); 
           final int tableNumber = selectedTableIndex + 1;
 
-          // Mengunci nomor meja terpilih agar langsung berstatus "TERISI" bagi antrean transaksi berikutnya
           setState(() {
             occupiedTables.add(selectedTableIndex);
           });
 
-          // Mengirim argumen data nama dan meja secara tersinkronisasi ke Menu Page melalui Navigator Routing
           Navigator.pushNamed(
             context, 
             '/menu', 
             arguments: {
               'customer_name': customerName,
               'table_number': tableNumber,
+              'cashier_name': typedCashierName,
+              'avatar_url': _avatarUrl, // Sekarang avatar_url ikut terkirim ke halaman menu
             },
           ).then((_) {
-            // Callback ketika kembali ke halaman ini: reset form input utama
             setState(() {
               _nameController.clear();
               selectedTableIndex = -1;

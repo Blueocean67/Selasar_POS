@@ -32,6 +32,7 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
 
   String _customerName = "PELANGGAN";
   String _tableNumber = "--";
+  String _cashierName = "STAFF KASIR"; // Menyimpan nama kasir operasional penanggung jawab
   String _paymentMethod = "Tunai";
   double _subtotal = 0;
   double _discount = 0;
@@ -64,6 +65,7 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
       if (args is Map<String, dynamic>) {
         _customerName = args['customer_name'] ?? "PELANGGAN";
         _tableNumber = args['table_number'] ?? "--";
+        _cashierName = args['cashier_name'] ?? "STAFF KASIR"; // Parsing nama kasir otomatis dari hulu setup order
         _subtotal = (args['subtotal'] as num?)?.toDouble() ?? 0;
         _discount = (args['discount'] as num?)?.toDouble() ?? 0;
         _tax = (args['tax'] as num?)?.toDouble() ?? 0;
@@ -73,7 +75,7 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
         _changeAmount = (args['change'] as num?)?.toDouble() ?? 0;
         _bankName = args['bank_name'] ?? "";
         _referenceNumber = args['reference_number'] ?? "";
-        _appliedPromoCode = args['applied_promo_code'] ?? "";
+        _appliedPromoCode = args['applied_promo_code'] ?? args['promo_code'] ?? "";
         _itemsOrdered = args['items'] ?? [];
       }
       _isDataInitialized = true;
@@ -114,11 +116,15 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
       });
 
       // --- JEMBATAN SINKRONISASI UTAMA: KIRIM DATA KE HISTORY & AKSIKAN NOTIFIKASI ---
-      // Konversi list items orderan kasir agar struktur key-nya sama ('name', 'qty') dengan tiruan model history
       List<Map<String, dynamic>> structuredMenuItems = _itemsOrdered.map((item) {
         return {
+          'id': item['id']?.toString() ?? '',
           'name': item['name'] ?? item['menu_name'] ?? 'Menu',
           'qty': item['quantity'] ?? item['qty'] ?? 1,
+          'price': (item['price'] as num?)?.toInt() ?? 0,
+          'note': item['note'] ?? '',
+          'image': item['image'] ?? item['image_url'] ?? '',
+          'category': item['category'] ?? '',
         };
       }).toList();
 
@@ -126,19 +132,29 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
       await context.read<OrderHistoryManager>().addOrder({
         'id': _cachedRefId,
         'customer_name': _customerName,
+        'table_number': _tableNumber,
+        'cashier_name': _cashierName,
         'total_price': _totalPayable.toInt(),
+        'subtotal': _subtotal.toInt(),
+        'discount': _discount.toInt(),
+        'tax': _tax.toInt(),
         'items_count': totalItemsCount,
         'payment_method': _paymentMethod,
-        'items': structuredMenuItems, // data menu riil dimasukkan ke history
+        'applied_promo_code': _appliedPromoCode,
+        'cash_amount': _cashAmount > 0 ? _cashAmount.toInt() : _totalPayable.toInt(),
+        'change': _changeAmount.toInt(),
+        'items': structuredMenuItems, 
+        'created_at': timestamp,
+        'status': 'Proses', // Default masuk ke tab Proses antrean dapur/barista
       });
 
-      // 1. Sinkronisasi tabel utama 'transactions' Supabase
+      // 1. Sinkronisasi tabel utama 'transactions' Supabase (Nama Kasir dipisah secara tepat dari Pelanggan)
       await _supabase.from('transactions').insert({
         'id': _cachedRefId,
         'created_at': timestamp,
         'total_price': _totalPayable.toInt(),
         'payment_status': 'SUCCESS',
-        'cashier_name': _customerName,
+        'cashier_name': _cashierName, // Memasukkan operator kasir asli ke database riil
         'items_count': totalItemsCount,
         'product_summary': productSummary,
       });
@@ -148,6 +164,7 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
         'id': _cachedRefId,
         'customer_name': _customerName,
         'table_number': _tableNumber,
+        'cashier_name': _cashierName,
         'payment_method': _paymentMethod,
         'subtotal': _subtotal.toInt(),
         'discount': _discount.toInt(),
@@ -159,7 +176,7 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
         'bank_name': _bankName,
         'reference_number': _referenceNumber,
         'applied_promo_code': _appliedPromoCode,
-        'items': _itemsOrdered, 
+        'items': structuredMenuItems, 
         'status': 'Selesai',
         'order_status': 'Selesai',
         'payment_status': 'Selesai',
@@ -330,6 +347,7 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
                       const SizedBox(height: 32),
                       ElevatedButton.icon(
                         onPressed: () {
+                          // --- NAVIGASI KE RECEIPT PAGE SECARA SINKRON DENGAN ARGUMEN LENGKAP ---
                           Navigator.pushNamed(
                             context, 
                             '/receipt',
@@ -337,6 +355,7 @@ class _PaymentSuccessPageState extends State<PaymentSuccessPage>
                               'transaction_id': _cachedRefId,
                               'customer_name': _customerName,
                               'table_number': _tableNumber,
+                              'cashier_name': _cashierName, // Meneruskan parameter nama kasir ke struk cetak
                               'subtotal': _subtotal,
                               'discount': _discount,
                               'tax': _tax,

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,9 +7,8 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:provider/provider.dart';
-import 'package:intl/intl.dart';
 
-// --- IMPORT MODELS & PROVIDERS ---
+// --- IMPORT PROVIDERS ---
 import 'package:selasar_pos/provider/promo_provider.dart';
 
 // --- IMPORT ALL PAGES ---
@@ -31,46 +29,37 @@ import 'package:selasar_pos/pages/receipt_page.dart';
 import 'package:selasar_pos/pages/profile_page.dart';
 import 'package:selasar_pos/pages/promo_page.dart'; 
 import 'package:selasar_pos/pages/form_promo_page.dart'; 
+import 'package:selasar_pos/pages/finance_summary_page.dart';
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
-
-// Perantara global agar OrderHistoryManager bisa berkomunikasi langsung dengan PromoProvider pendata stok
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 late BuildContext globalAppContext;
 
-// ============================================================
-//  MAIN INTI ENTRY POINT
-// ============================================================
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  // Inisialisasi Notifikasi Lokal
-  const AndroidInitializationSettings initAndroid =
-      AndroidInitializationSettings('@mipmap/ic_launcher');
-  await flutterLocalNotificationsPlugin.initialize(
-    const InitializationSettings(android: initAndroid),
-  );
+  // Inisialisasi Notifikasi untuk Android
+  const AndroidInitializationSettings initAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+  await flutterLocalNotificationsPlugin.initialize(const InitializationSettings(android: initAndroid));
 
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
 
   try {
     await Supabase.initialize(
       url: 'https://qvryhvpamkoykngfhcgn.supabase.co',
-      anonKey:
-          'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2cnlodnBhbWtveWtuZ2ZoY2duIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4NTYxMjgsImV4cCI6MjA5MjQzMjEyOH0.e0RRMehqwRpfg6r7icBAJYXxMfB0Moqkc4OIvw4WKhI',
-      realtimeClientOptions:
-          const RealtimeClientOptions(eventsPerSecond: 10),
+      anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InF2cnlodnBhbWtveWtuZ2ZoY2duIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY4NTYxMjgsImV4cCI6MjA5MjQzMjEyOH0.e0RRMehqwRpfg6r7icBAJYXxMfB0Moqkc4OIvw4WKhI',
+      realtimeClientOptions: const RealtimeClientOptions(eventsPerSecond: 10),
     );
-    
     await DatabaseHelper.instance.database;
-    debugPrint('Selasar System: Ready ✓');
   } catch (e) {
-    debugPrint('Selasar System Initialization Bypassed (Running Sandbox Mode): $e');
+    debugPrint('System Init Error: $e');
   }
 
   runApp(
     MultiProvider(
       providers: [
+        ChangeNotifierProvider(
+          create: (_) => PromoProvider()..fetchPromosFromDatabase()..listenToStockChanges(),
+        ),
         ChangeNotifierProvider(create: (_) => LocalizationProvider()),
         ChangeNotifierProvider(create: (_) => OrderHistoryManager()), 
         ChangeNotifierProvider(create: (_) => CartProvider()),
@@ -78,26 +67,18 @@ void main() async {
         ChangeNotifierProvider(create: (_) => ReportProvider()),
         ChangeNotifierProvider(create: (_) => DashboardProvider()),
         ChangeNotifierProvider(create: (_) => MenuProvider()),
-        ChangeNotifierProvider(
-          create: (_) => PromoProvider()
-            ..fetchPromosFromDatabase()
-            ..listenToStockChanges(),
-        ),
       ],
       child: const SelasarRuangApp(),
     ),
   );
 }
 
-// ============================================================
-//  ROOT APP & DYNAMIC ROUTING CONFIGURATION
-// ============================================================
 class SelasarRuangApp extends StatelessWidget {
   const SelasarRuangApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    globalAppContext = context; // Kunci context global di root widget
+    globalAppContext = context;
 
     return MaterialApp(
       title: 'Selasar Ruang POS',
@@ -117,25 +98,51 @@ class SelasarRuangApp extends StatelessWidget {
         return MaterialPageRoute(
           settings: settings,
           builder: (context) {
+            globalAppContext = context;
             switch (settings.name) {
               case '/auth_check': return const AuthStateCheck();
               case '/welcome': return const WelcomePage();
-              case '/login': return const LoginScreen();
+              case '/login': return const LoginScreen(); 
               case '/signup': return const SignupPage();
               case '/dashboard': return const DashboardPage();
-              case '/order_summary': return const OrderSummaryPage();
+              case '/order_summary': return const OrderSummaryPage(); 
               case '/promo': return const PromoPage();
               case '/form_promo': return const FormPromoPage();
               case '/setup_order': return const SetupOrderPage();
-              case '/payment_success': return const PaymentSuccessPage();
+              
+              case '/payment_success': 
+                final args = settings.arguments as Map<String, dynamic>? ?? {};
+                
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (context.mounted) {
+                    // Meneruskan seluruh payload dari Kasir (SetupOrder -> Menu -> Summary -> PaymentSuccess)
+                    context.read<OrderHistoryManager>().addOrder({
+                      'customer_name': args['customer_name'] ?? 'Pelanggan Selasar',
+                      'cashier_name': args['cashier_name'] ?? 'Kasir Utama',
+                      'table_number': args['table_number'] ?? '${Random().nextInt(20) + 1}',
+                      'total_price': args['total_price'] ?? args['total'] ?? 0,
+                      'items': args['items'], // Menggunakan key 'items' secara seragam
+                      'payment_method': args['payment_method'] ?? 'QRIS',
+                    });
+                    
+                    Future.delayed(const Duration(seconds: 2), () {
+                      if (context.mounted) {
+                        Navigator.pushReplacementNamed(context, '/receipt', arguments: args);
+                      }
+                    });
+                  }
+                });
+                return const PaymentSuccessPage();
+                
               case '/receipt': return const ReceiptPage();
               case '/menu': return const MenuPage();
               case '/menu_gallery': return const MenuGalleryPage();
               case '/upload_menu': return const UploadMenuPage();
               case '/stock_manage': return const StockManagementPage();
               case '/report': return const ReportPage();
-              case '/history': return const HistoryOrderPage();
+              case '/history': return const HistoryOrderPage(); 
               case '/profile': return const ProfilePage();
+              case '/financesummary': return const FinanceSummaryPage();
               default: return const DashboardPage();
             }
           },
@@ -188,7 +195,7 @@ class OrderStatus {
 }
 
 // ============================================================
-//  ORDER HISTORY MANAGER (AUTOMATIC SINKRONISASI POTONG STOK LOKAL)
+//  ORDER HISTORY MANAGER (FIXED DATA SYNC & UNIFORM POOL)
 // ============================================================
 class OrderHistoryManager with ChangeNotifier {
   final List<Map<String, dynamic>> _allOrders = [];
@@ -215,6 +222,8 @@ class OrderHistoryManager with ChangeNotifier {
     'Burger', 'Ayam Sambal Geprek', 'Cookies', 'Kopi Gula Aren',
   ];
 
+  static const List<String> _cashierPool = ['Andi', 'Siti', 'Budi', 'Randi', 'Mega'];
+
   OrderHistoryManager() {
     _generatePastCalendarDummyData();
     _startLiveSimulationEngine();
@@ -230,16 +239,17 @@ class OrderHistoryManager with ChangeNotifier {
       {'date': now.subtract(const Duration(days: 2)), 'label': '2 hari lalu'},
     ];
 
+    // Data Dummy kini diisi lengkap dengan No Meja (1-20) dan Nama Kasir
     final dummyEntries = [
-      _buildDummyEntry(name: 'Rian Baskoro',   hour: 18, minute: 45, price: 210000, items: 5, status: OrderStatus.completed),
-      _buildDummyEntry(name: 'Amalia Putri',   hour: 16, minute: 10, price: 120000, items: 4, status: OrderStatus.completed),
-      _buildDummyEntry(name: 'Budi Santoso',   hour: 14, minute: 20, price: 145000, items: 3, status: OrderStatus.sedangDibuat, activeMinutesAgo: 2),
-      _buildDummyEntry(name: 'Siti Rahma',     hour: 9,  minute: 15, price: 82500,  items: 2, status: OrderStatus.completed),
-      _buildDummyEntry(name: 'Wahyu Saputra',  hour: 20, minute: 5,  price: 175000, items: 4, status: OrderStatus.completed),
-      _buildDummyEntry(name: 'Lina Marlinda',  hour: 17, minute: 30, price: 95000,  items: 3, status: OrderStatus.completed),
-      _buildDummyEntry(name: 'Doni Firmansyah',hour: 13, minute: 0,  price: 250000, items: 6, status: OrderStatus.completed),
+      _buildDummyEntry(name: 'Rian Baskoro', hour: 18, minute: 45, price: 210000, items: 5, status: OrderStatus.completed),
+      _buildDummyEntry(name: 'Amalia Putri', hour: 16, minute: 10, price: 120000, items: 4, status: OrderStatus.completed),
+      _buildDummyEntry(name: 'Budi Santoso', hour: 14, minute: 20, price: 145000, items: 3, status: OrderStatus.sedangDibuat, activeMinutesAgo: 2),
+      _buildDummyEntry(name: 'Siti Rahma',   hour: 9,  minute: 15, price: 82500,  items: 2, status: OrderStatus.completed),
+      _buildDummyEntry(name: 'Wahyu Saputra',hour: 20, minute: 5,  price: 175000, items: 4, status: OrderStatus.completed),
+      _buildDummyEntry(name: 'Lina Marlinda',hour: 17, minute: 30, price: 95000,  items: 3, status: OrderStatus.completed),
+      _buildDummyEntry(name: 'Doni Firmansyah',hour: 13, minute: 0, price: 250000, items: 6, status: OrderStatus.completed),
       _buildDummyEntry(name: 'Rini Wulandari', hour: 10, minute: 45, price: 62000,  items: 2, status: OrderStatus.completed),
-      _buildDummyEntry(name: 'Teguh Santoso',  hour: 19, minute: 20, price: 185000, items: 5, status: OrderStatus.completed),
+      _buildDummyEntry(name: 'Teguh Santoso', hour: 19, minute: 20, price: 185000, items: 5, status: OrderStatus.completed),
       _buildDummyEntry(name: 'Mega Ratnasari', hour: 15, minute: 55, price: 105000, items: 3, status: OrderStatus.completed),
       _buildDummyEntry(name: 'Eko Prasetyo',   hour: 12, minute: 10, price: 78000,  items: 2, status: OrderStatus.completed),
       _buildDummyEntry(name: 'Fitri Handayani',hour: 8,  minute: 30, price: 135000, items: 4, status: OrderStatus.completed),
@@ -262,7 +272,9 @@ class OrderHistoryManager with ChangeNotifier {
       cleanEntry['created_at'] = createdAt.toIso8601String();
       cleanEntry['id'] = (_idCounter++).toString();
       cleanEntry['payment_method'] = 'QRIS';
-      cleanEntry['menu_items'] ??= _randomMenuItems(entry['items_count'] as int);
+      cleanEntry['cashier_name'] = _cashierPool[_random.nextInt(_cashierPool.length)];
+      cleanEntry['table_number'] = '${_random.nextInt(20) + 1}'; // Random Meja 1-20
+      cleanEntry['items'] ??= _randomMenuItems(entry['items_count'] as int); // Diseragamkan menggunakan key 'items'
 
       _allOrders.add(cleanEntry);
     }
@@ -292,7 +304,7 @@ class OrderHistoryManager with ChangeNotifier {
       'items_count': items,
       'status': status,
       'next_status_at': nextStatusAt?.toIso8601String(),
-      'menu_items': null,
+      'items': null,
     };
   }
 
@@ -301,14 +313,14 @@ class OrderHistoryManager with ChangeNotifier {
     final selected = shuffled.take(count.clamp(1, _menuPool.length)).toList();
     return selected.map((name) {
       final qty = 1 + (_random.nextInt(2));
-      return {'name': name, 'qty': qty};
+      return {'name': name, 'qty': qty, 'price': 25000};
     }).toList();
   }
 
   Future<void> _triggerPushNotification(String title, String message) async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
       'selasar_pos_channel', 'Selasar POS Transactions',
-      channelDescription: 'Notifikasi Order Realtime Selasar Ruang Cafe',
+      channelDescription: 'Notifikasi Order Selasar Ruang Cafe',
       importance: Importance.max, priority: Priority.high,
     );
     await flutterLocalNotificationsPlugin.show(
@@ -317,7 +329,6 @@ class OrderHistoryManager with ChangeNotifier {
     );
   }
 
-  // AUTOMATIC REALTIME ENGINE PENGURANGAN STOK VIA PEMBELIAN KASIR & SIMULASI MASUK
   void _executeAutomaticStockReduction(List<Map<String, dynamic>> items) {
     try {
       final promoProvider = globalAppContext.read<PromoProvider>();
@@ -338,8 +349,6 @@ class OrderHistoryManager with ChangeNotifier {
             if (currentStock == 9999 || currentStock < 0) currentStock = 20;
 
             int finalUpdatedStock = (currentStock - qty).clamp(0, 99999);
-            
-            // Pengurangan stok dieksekusi secara instan dan global ke state pusat
             promoProvider.updateStock(menuId, finalUpdatedStock);
           }
         }
@@ -407,15 +416,13 @@ class OrderHistoryManager with ChangeNotifier {
     ];
     final name = names[_random.nextInt(names.length)];
     final itemsCount = 1 + _random.nextInt(3);
-    final totalPrice = itemsCount * 23000;
+    final totalPrice = itemsCount * 25000;
 
     addLiveOrderFromCashier(
       customerName: name,
       totalPrice: totalPrice,
       itemsCount: itemsCount,
     );
-    
-    _triggerPushNotification("Order pesanan diterima", "Pesanan baru dari $name berhasil ditambahkan!");
   }
 
   void addLiveOrderFromCashier({
@@ -430,6 +437,8 @@ class OrderHistoryManager with ChangeNotifier {
     final newOrder = _buildOrder(
       id: newId,
       customerName: customerName,
+      cashierName: _cashierPool[_random.nextInt(_cashierPool.length)],
+      tableNumber: '${_random.nextInt(20) + 1}',
       createdAt: now,
       totalPrice: totalPrice,
       itemsCount: itemsCount,
@@ -437,35 +446,38 @@ class OrderHistoryManager with ChangeNotifier {
       menuItems: randomItems,
     );
 
-    // Otomatis kurangi stok saat pesanan simulasi masuk
     _executeAutomaticStockReduction(randomItems);
 
     _allOrders.insert(0, newOrder);
     notifyListeners();
+
+    _triggerPushNotification("Order Masuk Baru", "Pesanan baru dari $customerName (Meja ${newOrder['table_number']}) berhasil dimasukkan!");
   }
 
   Future<void> addOrder(Map<String, dynamic> orderData) async {
     final now = DateTime.now();
-    final int itemsCount = orderData['items_count'] ?? 1;
     final int total = (orderData['total_price'] ?? orderData['total'] ?? 0).toInt();
+    final String cashierName = orderData['cashier_name'] ?? 'Kasir Utama';
+    final String tableNum = orderData['table_number'] ?? '${_random.nextInt(20) + 1}';
 
     final List<Map<String, dynamic>> menuItemsList = orderData['items'] is List 
         ? List<Map<String, dynamic>>.from(orderData['items']) 
-        : _randomMenuItems(itemsCount);
+        : _randomMenuItems(orderData['items_count'] ?? 1);
 
     final cleanPayload = _buildOrder(
       id: (_idCounter++).toString(),
-      customerName: orderData['customer_name'] ?? 'Pelanggan Walk-in',
+      customerName: orderData['customer_name'] ?? 'Pelanggan Kasir',
+      cashierName: cashierName,
+      tableNumber: tableNum,
       createdAt: now,
       totalPrice: total,
-      itemsCount: itemsCount,
+      itemsCount: menuItemsList.length,
       status: OrderStatus.pending,
       menuItems: menuItemsList,
     );
 
-    cleanPayload['payment_method'] = orderData['payment_method'] ?? 'Tunai';
+    cleanPayload['payment_method'] = orderData['payment_method'] ?? 'QRIS';
 
-    // Otomatis potong stok saat kasir memproses checkout pembayaran berhasil
     _executeAutomaticStockReduction(menuItemsList);
 
     try {
@@ -473,9 +485,9 @@ class OrderHistoryManager with ChangeNotifier {
       await supabase.from('transactions').insert({
         'total_price': cleanPayload['total_price'],
         'payment_status': 'SUCCESS',
-        'cashier_name': 'Kasir Selasar',
+        'cashier_name': cashierName,
         'items_count': cleanPayload['items_count'],
-        'product_summary': (cleanPayload['menu_items'] as List).map((e) => "${e['name']} (${e['qty']})").join(", ")
+        'product_summary': (cleanPayload['items'] as List).map((e) => "${e['name']} (${e['qty']})").join(", ")
       });
     } catch (e) {
       debugPrint("Koneksi Supabase dilewati, mode offline aman: $e");
@@ -484,12 +496,14 @@ class OrderHistoryManager with ChangeNotifier {
     _allOrders.insert(0, cleanPayload);
     notifyListeners();
 
-    _triggerPushNotification("Transaksi Berhasil", "Pembayaran POS Berhasil. Silakan Cetak Struk.");
+    _triggerPushNotification("Transaksi Berhasil", "Pembayaran dari ${cleanPayload['customer_name']} Sukses Diterima.");
   }
 
   Map<String, dynamic> _buildOrder({
     required String id,
     required String customerName,
+    required String cashierName,
+    required String tableNumber,
     required DateTime createdAt,
     required int totalPrice,
     required int itemsCount,
@@ -501,11 +515,13 @@ class OrderHistoryManager with ChangeNotifier {
     return {
       'id': id,
       'customer_name': customerName,
+      'cashier_name': cashierName,
+      'table_number': tableNumber,
       'created_at': createdAt.toIso8601String(),
       'total_price': totalPrice,
       'status': status,
       'items_count': itemsCount,
-      'menu_items': menuItems, 
+      'items': menuItems, // Seragam menggunakan key 'items'
       'next_status_at': OrderStatus.isDone(status) ? null : nextTime.toIso8601String(),
     };
   }
@@ -591,7 +607,7 @@ class DatabaseHelper {
 }
 
 // ============================================================
-//  SPLASH SCREEN PREMIUM (ANIMASI LOGO & BRANDING)
+//  SPLASH SCREEN PREMIUM INTERAKTIF
 // ============================================================
 class AuthStateCheck extends StatefulWidget {
   const AuthStateCheck({super.key});
@@ -603,16 +619,36 @@ class AuthStateCheck extends StatefulWidget {
 class _AuthStateCheckState extends State<AuthStateCheck> with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
+  late Animation<double> _scaleAnimation;
+  late Animation<double> _rotationAnimation;
 
   @override
   void initState() {
     super.initState();
     _animationController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1200),
+      duration: const Duration(milliseconds: 1800),
     );
+
     _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeIn),
+      CurvedAnimation(
+        parent: _animationController, 
+        curve: const Interval(0.0, 0.6, curve: Curves.easeIn),
+      ),
+    );
+
+    _scaleAnimation = Tween<double>(begin: 0.85, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: const Interval(0.0, 0.7, curve: Curves.elasticOut),
+      ),
+    );
+
+    _rotationAnimation = Tween<double>(begin: -0.05, end: 0.0).animate(
+      CurvedAnimation(
+        parent: _animationController,
+        curve: const Interval(0.0, 0.8, curve: Curves.easeOutBack),
+      ),
     );
     
     _animationController.forward();
@@ -620,8 +656,7 @@ class _AuthStateCheckState extends State<AuthStateCheck> with SingleTickerProvid
   }
 
   void _startNavigationTimer() async {
-    // Memberi jeda waktu 2.5 detik untuk memperlihatkan keindahan logo cafe
-    await Future.delayed(const Duration(milliseconds: 2500));
+    await Future.delayed(const Duration(milliseconds: 3000));
     if (mounted) {
       Navigator.pushReplacementNamed(context, '/dashboard');
     }
@@ -636,21 +671,44 @@ class _AuthStateCheckState extends State<AuthStateCheck> with SingleTickerProvid
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
-      body: FadeTransition(
-        opacity: _fadeAnimation,
+      backgroundColor: const Color(0xFFFDFDFB),
+      body: AnimatedBuilder(
+        animation: _animationController,
+        builder: (context, child) {
+          return Opacity(
+            opacity: _fadeAnimation.value,
+            child: Transform.scale(
+              scale: _scaleAnimation.value,
+              child: Transform.rotate(
+                angle: _rotationAnimation.value,
+                child: child,
+              ),
+            ),
+          );
+        },
         child: Stack(
           children: [
-            // Ornamen Background Estetik ala Selasar Cafe
             Positioned(
-              top: -60,
-              right: -60,
+              top: -80,
+              right: -80,
               child: Container(
-                width: 180,
-                height: 180,
+                width: 240,
+                height: 240,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: AppTheme.primary.withOpacity(0.06),
+                  color: AppTheme.primary.withOpacity(0.05),
+                ),
+              ),
+            ),
+            Positioned(
+              bottom: -100,
+              left: -60,
+              child: Container(
+                width: 260,
+                height: 260,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: AppTheme.accent.withOpacity(0.04),
                 ),
               ),
             ),
@@ -658,32 +716,31 @@ class _AuthStateCheckState extends State<AuthStateCheck> with SingleTickerProvid
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  // Wadah Logo Berbentuk Lingkaran Premium dengan Bayangan Halus
                   Container(
-                    width: 140,
-                    height: 140,
+                    width: 150,
+                    height: 150,
                     decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       color: Colors.white,
                       boxShadow: [
                         BoxShadow(
-                          color: AppTheme.primary.withOpacity(0.12),
-                          blurRadius: 30,
-                          spreadRadius: 2,
-                          offset: const Offset(0, 8),
+                          color: AppTheme.primary.withOpacity(0.1),
+                          blurRadius: 35,
+                          spreadRadius: 3,
+                          offset: const Offset(0, 10),
                         ),
                       ],
                     ),
                     child: ClipOval(
                       child: Padding(
-                        padding: const EdgeInsets.all(12.0),
+                        padding: const EdgeInsets.all(14.0),
                         child: Image.asset(
                           'assets/images/SelasarLogo.png',
                           fit: BoxFit.contain,
                           errorBuilder: (context, error, stackTrace) {
                             return const Icon(
                               Icons.coffee_rounded,
-                              size: 65,
+                              size: 70,
                               color: AppTheme.primary,
                             );
                           },
@@ -691,20 +748,18 @@ class _AuthStateCheckState extends State<AuthStateCheck> with SingleTickerProvid
                       ),
                     ),
                   ),
-                  const SizedBox(height: 28),
-                  // Judul Utama Sistem Manajemen POS
+                  const SizedBox(height: 32),
                   const Text(
                     "SELASAR RUANG",
                     style: TextStyle(
                       fontFamily: 'PlusJakartaSans',
-                      fontSize: 24,
+                      fontSize: 26,
                       fontWeight: FontWeight.w900,
                       color: AppTheme.textPrimary,
-                      letterSpacing: 3,
-                    ),
+                      letterSpacing: 4,
+                ),
                   ),
-                  const SizedBox(height: 6),
-                  // Slogan Penunjang agar Terlihat Profesional saat Demo
+                  const SizedBox(height: 8),
                   Text(
                     "Selasar Cafe Management System for Specialty Coffee",
                     textAlign: TextAlign.center,
@@ -712,7 +767,7 @@ class _AuthStateCheckState extends State<AuthStateCheck> with SingleTickerProvid
                       fontFamily: 'PlusJakartaSans',
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: AppTheme.textPrimary.withOpacity(0.45),
+                      color: AppTheme.textPrimary.withOpacity(0.4),
                       height: 1.5,
                       letterSpacing: 0.5,
                     ),
@@ -720,18 +775,17 @@ class _AuthStateCheckState extends State<AuthStateCheck> with SingleTickerProvid
                 ],
               ),
             ),
-            // Indikator Loading Kecil dan Bersih di Bagian Bawah Layar
             Positioned(
-              bottom: 60,
-              left: 0,
-              right: 0,
-              child: Center(
+              bottom: 70,
+              left: 50,
+              right: 50,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
                 child: SizedBox(
-                  width: 22,
-                  height: 22,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.5,
-                    valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary.withOpacity(0.6)),
+                  height: 3.5,
+                  child: LinearProgressIndicator(
+                    backgroundColor: AppTheme.primary.withOpacity(0.1),
+                    valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.primary),
                   ),
                 ),
               ),
